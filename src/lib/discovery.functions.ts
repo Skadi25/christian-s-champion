@@ -23,7 +23,7 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
     const { supabase, userId } = context;
 
     const selectFields =
-      "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, matched_at, status, video:videos(id, platform, external_id, url, title, channel_name, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds), topic:topics(id, name), claim:claims(id, text)";
+      "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, matched_at, status, user_feedback, video:videos(id, platform, external_id, url, title, channel_name, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds, language), topic:topics(id, name), claim:claims(id, text)";
 
     const [{ data: matches, error: mErr }, { data: rejected, error: rErr }] =
       await Promise.all([
