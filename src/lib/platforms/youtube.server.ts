@@ -109,10 +109,13 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
 
       const seen = new Set<string>();
       const ids: string[] = [];
+      const debug = q.debug;
 
       outer: for (const order of orders) {
         let pageToken: string | undefined;
+        let page = 0;
         while (ids.length < target) {
+          page++;
           const params = new URLSearchParams({
             key: apiKey,
             part: "snippet",
@@ -120,16 +123,28 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
             q: q.query,
             maxResults: String(Math.min(PAGE_SIZE, target - ids.length)),
             order,
-            relevanceLanguage: q.language ?? "de",
-            regionCode: q.region ?? "DE",
             safeSearch: "none",
           });
+          // Sprache/Region sind BIAS, kein Hard-Filter — trotzdem optional halten,
+          // damit ein Aufrufer sie ausschalten kann (region=""/language="").
+          if (q.language !== "") params.set("relevanceLanguage", q.language ?? "de");
+          if (q.region !== "") params.set("regionCode", q.region ?? "DE");
           if (q.publishedAfter) params.set("publishedAfter", q.publishedAfter);
           if (pageToken) params.set("pageToken", pageToken);
 
-          const res = await fetch(`${SEARCH_URL}?${params}`);
+          const url = `${SEARCH_URL}?${params}`;
+          const res = await fetch(url);
           if (!res.ok) {
             const body = await res.text().catch(() => "");
+            debug?.push({
+              url: redactKey(url),
+              status: res.status,
+              order,
+              page,
+              items_returned: 0,
+              ids_collected_so_far: ids.length,
+              error: (body || res.statusText).slice(0, 300),
+            });
             if (res.status === 403 || res.status === 400) {
               if (ids.length > 0) break outer;
               throw new YouTubeApiError(res.status, body || res.statusText);
@@ -140,6 +155,7 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
             items?: Array<{ id: { videoId?: string } }>;
             nextPageToken?: string;
           };
+          const itemCount = json.items?.length ?? 0;
           for (const it of json.items ?? []) {
             const id = it.id?.videoId;
             if (id && !seen.has(id)) {
@@ -147,13 +163,22 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
               ids.push(id);
             }
           }
+          debug?.push({
+            url: redactKey(url),
+            status: res.status,
+            order,
+            page,
+            items_returned: itemCount,
+            ids_collected_so_far: ids.length,
+            next_page_token: Boolean(json.nextPageToken),
+          });
           if (!json.nextPageToken || ids.length >= target) break;
           pageToken = json.nextPageToken;
         }
       }
 
       if (ids.length === 0) return [];
-      return fetchDetailsInBatches(apiKey, ids);
+      return fetchDetailsInBatches(apiKey, ids, debug);
     },
 
     async fetchVideoStats(externalIds: string[]): Promise<PlatformVideo[]> {
