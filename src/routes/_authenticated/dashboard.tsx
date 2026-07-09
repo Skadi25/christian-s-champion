@@ -1,21 +1,40 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Plus, ArrowRight } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import {
+  Sparkles,
+  Plus,
+  ArrowRight,
+  RefreshCw,
+  ExternalLink,
+  ChevronDown,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
+import { runDiscovery, getDiscoveryFeed } from "@/lib/discovery.functions";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
 });
+
+type Match = Awaited<ReturnType<typeof getDiscoveryFeed>>["matches"][number];
 
 function Dashboard() {
   const qc = useQueryClient();
   const [userId, setUserId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string>("");
   const [seeding, setSeeding] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [selectedTopic, setSelectedTopic] = useState<string | "all">("all");
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const runDiscoveryFn = useServerFn(runDiscovery);
+  const getFeedFn = useServerFn(getDiscoveryFeed);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -26,9 +45,7 @@ function Dashboard() {
         .select("display_name")
         .eq("id", data.user.id)
         .maybeSingle();
-      setDisplayName(
-        profile?.display_name ?? data.user.email?.split("@")[0] ?? "",
-      );
+      setDisplayName(profile?.display_name ?? data.user.email?.split("@")[0] ?? "");
     });
   }, []);
 
@@ -38,33 +55,81 @@ function Dashboard() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("topics")
-        .select("id, name, is_active, claims:claims(count)")
+        .select("id, name, claims:claims(count)")
         .order("created_at", { ascending: true });
       if (error) throw error;
       return data;
     },
   });
 
+  const feedQ = useQuery({
+    queryKey: ["discovery-feed", userId],
+    enabled: !!userId,
+    queryFn: () => getFeedFn(),
+  });
+
   const totalTopics = topicsQ.data?.length ?? 0;
   const totalClaims =
-    topicsQ.data?.reduce(
-      (sum, t) => sum + (t.claims?.[0]?.count ?? 0),
-      0,
-    ) ?? 0;
+    topicsQ.data?.reduce((s, t) => s + (t.claims?.[0]?.count ?? 0), 0) ?? 0;
+  const matches = feedQ.data?.matches ?? [];
+  const lastRun = feedQ.data?.lastRun ?? null;
+
+  const filtered = useMemo(
+    () =>
+      selectedTopic === "all"
+        ? matches
+        : matches.filter((m) => m.topic?.id === selectedTopic),
+    [matches, selectedTopic],
+  );
+
+  const stats = useMemo(() => {
+    const scores = matches
+      .map((m) => m.opportunity_score)
+      .filter((n): n is number => typeof n === "number");
+    const avg =
+      scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const newToday = matches.filter(
+      (m) => m.matched_at && new Date(m.matched_at).getTime() >= today.getTime(),
+    ).length;
+    const top = matches[0]?.opportunity_score ?? null;
+    return { avg, newToday, top, total: matches.length };
+  }, [matches]);
 
   async function handleStarterPack() {
     if (!userId) return;
     setSeeding(true);
     try {
       const res = await seedStarterPack(userId);
-      toast.success(
-        `Starter-Pack geladen: ${res.topics} Themen · ${res.claims} Claims.`,
-      );
+      toast.success(`Starter-Pack geladen: ${res.topics} Themen · ${res.claims} Claims.`);
       qc.invalidateQueries({ queryKey: ["topics"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Konnte nicht laden.");
     } finally {
       setSeeding(false);
+    }
+  }
+
+  async function handleRun() {
+    setRunning(true);
+    const t = toast.loading("Suche virale Videos zu deinen Claims …");
+    try {
+      const res = await runDiscoveryFn();
+      toast.dismiss(t);
+      if (res?.note === "no_claims") {
+        toast.warning("Noch keine aktiven Claims. Lege welche im Themen-Editor an.");
+      } else {
+        toast.success(
+          `Discovery abgeschlossen: ${res?.matched ?? 0} relevante Videos von ${res?.scanned ?? 0} geprüften.`,
+        );
+      }
+      qc.invalidateQueries({ queryKey: ["discovery-feed"] });
+    } catch (e) {
+      toast.dismiss(t);
+      toast.error(e instanceof Error ? e.message : "Discovery fehlgeschlagen.");
+    } finally {
+      setRunning(false);
     }
   }
 
@@ -78,7 +143,7 @@ function Dashboard() {
       <div className="mx-auto max-w-6xl px-6 py-10 md:px-10">
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wider text-signal">
               Discovery
             </p>
@@ -90,78 +155,352 @@ function Dashboard() {
               Das ist heute wichtig für dich — priorisiert nach Reichweite und Wirkung.
             </p>
           </div>
-          <div className="hidden text-right md:block">
-            <p className="text-sm font-medium text-muted-foreground">
-              {new Date().toLocaleDateString("de-DE", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-              })}
-            </p>
-          </div>
+          {!empty && (
+            <div className="flex flex-col items-end gap-1.5">
+              <button
+                onClick={handleRun}
+                disabled={running}
+                className="inline-flex items-center gap-2 rounded-xl bg-signal px-5 py-2.5 text-sm font-semibold text-signal-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
+              >
+                {running ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {running ? "Suche läuft …" : "Jetzt aktualisieren"}
+              </button>
+              {lastRun?.finished_at && (
+                <p className="text-xs text-muted-foreground">
+                  Zuletzt {formatRelativeTime(lastRun.finished_at)}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {empty ? (
           <EmptyState onLoad={handleStarterPack} seeding={seeding} />
         ) : (
           <>
-            {/* Quick stats */}
+            {/* Stats */}
             <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
               <StatCard emoji="🎯" label="Themen" value={totalTopics} tone="signal" />
               <StatCard emoji="⚠️" label="Claims" value={totalClaims} tone="warning" />
-              <StatCard emoji="🔥" label="Neue Videos heute" value={0} muted />
-              <StatCard emoji="📈" label="Ø Opportunity Score" value="—" muted />
-            </div>
-
-            {/* Overview cards */}
-            <div className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <OverviewCard
-                emoji="🔥"
-                title="Hochrelevante Videos"
-                subtitle="Videos, die deine Claims treffen und hohe Reichweite haben"
-                count={0}
-              />
-              <OverviewCard
+              <StatCard emoji="🔥" label="Neue Videos heute" value={stats.newToday} muted={stats.newToday === 0} />
+              <StatCard
                 emoji="📈"
-                title="Starkes Wachstum"
-                subtitle="Videos mit überdurchschnittlichem Views-Anstieg"
-                count={0}
-              />
-              <OverviewCard
-                emoji="💬"
-                title="Diskussion in Kommentaren"
-                subtitle="Wo die Community aktiv über den Claim streitet"
-                count={0}
-              />
-              <OverviewCard
-                emoji="⭐"
-                title="Top Reaction Opportunity"
-                subtitle="Die beste Chance heute für eine Reaktion"
-                count={0}
+                label="Ø Opportunity Score"
+                value={stats.avg ?? "—"}
+                muted={stats.avg === null}
               />
             </div>
 
-            <div className="mt-6 rounded-2xl border border-dashed border-border bg-surface p-8 text-center">
-              <p className="text-2xl">🚀</p>
-              <h3 className="font-display mt-3 text-xl font-semibold">
-                Discovery aktiviert sich in Schritt 2
-              </h3>
-              <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
-                Deine {totalTopics} Themen und {totalClaims} Claims sind gespeichert. Als
-                nächstes verbinden wir die YouTube-Discovery, die deinen Feed automatisch
-                mit passenden viralen Videos füllt.
+            {/* Feed */}
+            <section className="mt-10">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <h2 className="font-display text-2xl font-bold tracking-tight">
+                    🔥 Priorisierte Videos
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Sortiert nach Opportunity Score. Klicke eine Karte für die Aufschlüsselung.
+                  </p>
+                </div>
+                {topicsQ.data && topicsQ.data.length > 0 && matches.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    <FilterChip
+                      active={selectedTopic === "all"}
+                      onClick={() => setSelectedTopic("all")}
+                    >
+                      Alle · {matches.length}
+                    </FilterChip>
+                    {topicsQ.data.map((t) => {
+                      const count = matches.filter((m) => m.topic?.id === t.id).length;
+                      if (count === 0) return null;
+                      return (
+                        <FilterChip
+                          key={t.id}
+                          active={selectedTopic === t.id}
+                          onClick={() => setSelectedTopic(t.id)}
+                        >
+                          {t.name} · {count}
+                        </FilterChip>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {feedQ.isLoading ? (
+                <div className="mt-6 grid gap-3">
+                  {[0, 1, 2].map((i) => (
+                    <div
+                      key={i}
+                      className="h-40 animate-pulse rounded-2xl border border-border bg-white"
+                    />
+                  ))}
+                </div>
+              ) : filtered.length === 0 ? (
+                <FeedEmpty hasMatches={matches.length > 0} onRun={handleRun} running={running} />
+              ) : (
+                <div className="mt-6 grid gap-3">
+                  {filtered.map((m) => (
+                    <VideoMatchCard
+                      key={m.id}
+                      match={m}
+                      expanded={expanded === m.id}
+                      onToggle={() => setExpanded(expanded === m.id ? null : m.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <div className="mt-10 rounded-2xl border border-dashed border-border bg-surface p-6 text-center">
+              <p className="text-xs text-muted-foreground">
+                Phase 3 kommt als nächstes: pro Video ein KI-Reaktionsentwurf mit Hook und
+                wissenschaftlichen Quellen.
               </p>
-              <Link
-                to="/topics"
-                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:opacity-90"
-              >
-                Themen verwalten <ArrowRight className="h-4 w-4" />
-              </Link>
             </div>
           </>
         )}
       </div>
     </AppShell>
+  );
+}
+
+function VideoMatchCard({
+  match,
+  expanded,
+  onToggle,
+}: {
+  match: Match;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const v = match.video;
+  const score = match.opportunity_score ?? 0;
+  const bd = (match.score_breakdown ?? null) as {
+    reach?: number;
+    growth?: number;
+    recency?: number;
+    engagement?: number;
+    confidence?: number;
+  } | null;
+
+  const scoreColor =
+    score >= 75
+      ? "bg-red-100 text-red-700"
+      : score >= 50
+      ? "bg-amber-100 text-amber-700"
+      : "bg-slate-100 text-slate-600";
+
+  return (
+    <div className="card-hover overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
+      <div className="flex flex-col gap-4 p-4 md:flex-row">
+        {/* Thumbnail */}
+        {v?.thumbnail_url ? (
+          <a
+            href={v.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="relative block w-full shrink-0 overflow-hidden rounded-xl md:w-56"
+          >
+            <img
+              src={v.thumbnail_url}
+              alt=""
+              className="aspect-video h-full w-full object-cover"
+              loading="lazy"
+            />
+            {v.duration_seconds ? (
+              <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-mono text-white">
+                {formatDuration(v.duration_seconds)}
+              </span>
+            ) : null}
+          </a>
+        ) : (
+          <div className="aspect-video w-full shrink-0 rounded-xl bg-muted md:w-56" />
+        )}
+
+        {/* Body */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {match.topic?.name && (
+                  <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
+                    🎯 {match.topic.name}
+                  </span>
+                )}
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {v?.platform === "youtube" ? "▶ YouTube" : v?.platform}
+                </span>
+              </div>
+              <a
+                href={v?.url ?? "#"}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="mt-1.5 line-clamp-2 block font-semibold leading-snug hover:text-signal"
+              >
+                {v?.title || "Ohne Titel"}
+              </a>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {v?.channel_name ?? "Unbekannter Kanal"}
+                {v?.published_at && <> · {formatRelativeTime(v.published_at)}</>}
+              </p>
+            </div>
+            <div
+              className={cn(
+                "shrink-0 rounded-xl px-3 py-2 text-center",
+                scoreColor,
+              )}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wide">Score</p>
+              <p className="text-2xl font-bold leading-none">{score}</p>
+            </div>
+          </div>
+
+          {/* Metrics row */}
+          <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">👁 {formatCount(v?.view_count)}</span>
+            <span className="inline-flex items-center gap-1">❤️ {formatCount(v?.like_count)}</span>
+            <span className="inline-flex items-center gap-1">💬 {formatCount(v?.comment_count)}</span>
+            {v?.published_at && (
+              <span className="inline-flex items-center gap-1">
+                📈 {formatPerHour(v.view_count, v.published_at)}/h
+              </span>
+            )}
+          </div>
+
+          {/* AI summary */}
+          {match.ai_summary && (
+            <div className="mt-3 rounded-lg border-l-2 border-signal/60 bg-signal/5 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-signal">
+                ⚠️ Erkannter Claim
+              </p>
+              <p className="mt-0.5 text-sm text-foreground">{match.ai_summary}</p>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <a
+              href={v?.url ?? "#"}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-medium transition hover:bg-accent"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Auf {v?.platform === "youtube" ? "YouTube" : "der Plattform"} öffnen
+            </a>
+            <button
+              disabled
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-muted-foreground"
+              title="Kommt in Phase 3"
+            >
+              ✍️ Reaktion vorbereiten
+            </button>
+            <button
+              onClick={onToggle}
+              className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
+            >
+              Warum diese Priorität?
+              <ChevronDown className={cn("h-3.5 w-3.5 transition", expanded && "rotate-180")} />
+            </button>
+          </div>
+
+          {/* Expanded breakdown */}
+          {expanded && bd && (
+            <div className="mt-3 grid gap-2 rounded-lg bg-surface p-3 text-xs">
+              <ScoreBar label="🌍 Reichweite" value={bd.reach ?? 0} weight={35} />
+              <ScoreBar label="📈 Wachstum" value={bd.growth ?? 0} weight={25} />
+              <ScoreBar label="⏱ Aktualität" value={bd.recency ?? 0} weight={15} />
+              <ScoreBar label="💬 Engagement" value={bd.engagement ?? 0} weight={15} />
+              <ScoreBar label="🤖 KI-Confidence" value={bd.confidence ?? 0} weight={10} />
+              {match.ai_reasoning && (
+                <p className="mt-2 rounded bg-white p-2 text-muted-foreground">
+                  💡 {match.ai_reasoning}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScoreBar({ label, value, weight }: { label: string; value: number; weight: number }) {
+  return (
+    <div className="grid grid-cols-[110px_1fr_60px] items-center gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-signal transition-all"
+          style={{ width: `${Math.max(2, value)}%` }}
+        />
+      </div>
+      <span className="text-right font-mono text-[11px] text-muted-foreground">
+        {value} × {weight}%
+      </span>
+    </div>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-3 py-1 text-xs font-medium transition",
+        active
+          ? "border-signal bg-signal/10 text-signal"
+          : "border-border bg-white text-muted-foreground hover:bg-accent",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FeedEmpty({
+  hasMatches,
+  onRun,
+  running,
+}: {
+  hasMatches: boolean;
+  onRun: () => void;
+  running: boolean;
+}) {
+  return (
+    <div className="mt-6 rounded-2xl border border-dashed border-border bg-white p-10 text-center">
+      <p className="text-3xl">{hasMatches ? "🎯" : "🔍"}</p>
+      <h3 className="font-display mt-3 text-xl font-semibold">
+        {hasMatches ? "Kein Treffer in diesem Filter." : "Noch keine Videos entdeckt."}
+      </h3>
+      <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+        {hasMatches
+          ? "Wähle ein anderes Thema oder setze den Filter zurück."
+          : "Starte deinen ersten Discovery-Lauf. Die KI durchsucht YouTube nach Videos, die zu deinen Claims passen."}
+      </p>
+      {!hasMatches && (
+        <button
+          onClick={onRun}
+          disabled={running}
+          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-signal px-5 py-2.5 text-sm font-semibold text-signal-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
+        >
+          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {running ? "Suche läuft …" : "Ersten Discovery-Lauf starten"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -177,23 +516,16 @@ function EmptyState({ onLoad, seeding }: { onLoad: () => void; seeding: boolean 
         </h2>
         <p className="mt-3 text-base text-muted-foreground">
           Lade den <span className="font-medium text-foreground">Christian-Wolf-Starter-Pack</span>{" "}
-          mit typischen Falschaussagen aus Ernährung, Fitness und Supplements — oder
-          starte mit einem leeren Workspace.
+          mit typischen Falschaussagen aus Ernährung, Fitness und Supplements — oder starte
+          mit einem leeren Workspace.
         </p>
-
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button
             onClick={onLoad}
             disabled={seeding}
             className="inline-flex items-center gap-2 rounded-xl bg-signal px-5 py-3 text-sm font-semibold text-signal-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
           >
-            {seeding ? (
-              "Lade …"
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" /> Starter-Pack laden
-              </>
-            )}
+            {seeding ? "Lade …" : (<><Sparkles className="h-4 w-4" /> Starter-Pack laden</>)}
           </button>
           <Link
             to="/topics"
@@ -201,20 +533,6 @@ function EmptyState({ onLoad, seeding }: { onLoad: () => void; seeding: boolean 
           >
             <Plus className="h-4 w-4" /> Leer starten
           </Link>
-        </div>
-
-        <div className="mt-10 grid grid-cols-1 gap-3 text-left md:grid-cols-3">
-          {[
-            { emoji: "🎯", title: "Themen wählen", text: "Kreatin, Süßstoffe, Darm …" },
-            { emoji: "🔍", title: "KI findet Videos", text: "YouTube, später TikTok" },
-            { emoji: "✍️", title: "Reaktion vorbereitet", text: "Hook + Quellen inklusive" },
-          ].map((s) => (
-            <div key={s.title} className="rounded-xl border border-border bg-white p-4">
-              <div className="text-xl">{s.emoji}</div>
-              <p className="mt-2 text-sm font-semibold">{s.title}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{s.text}</p>
-            </div>
-          ))}
         </div>
       </div>
     </div>
@@ -257,36 +575,36 @@ function StatCard({
   );
 }
 
-function OverviewCard({
-  emoji,
-  title,
-  subtitle,
-  count,
-}: {
-  emoji: string;
-  title: string;
-  subtitle: string;
-  count: number;
-}) {
-  return (
-    <div className="card-hover rounded-2xl border border-border bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent text-lg">
-            {emoji}
-          </div>
-          <div className="min-w-0">
-            <p className="font-semibold">{title}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
-          </div>
-        </div>
-        <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-          {count}
-        </span>
-      </div>
-      <p className="mt-4 text-xs text-muted-foreground">
-        Wird verfügbar, sobald die Discovery aktiv ist.
-      </p>
-    </div>
-  );
+function formatCount(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+function formatDuration(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function formatPerHour(views: number | null | undefined, publishedAt: string): string {
+  if (!views) return "—";
+  const hours = Math.max(1, (Date.now() - new Date(publishedAt).getTime()) / 3_600_000);
+  return formatCount(Math.round(views / hours));
+}
+
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso).getTime();
+  const diff = Date.now() - d;
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "gerade eben";
+  if (m < 60) return `vor ${m} Min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `vor ${h} Std`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `vor ${days} Tag${days === 1 ? "" : "en"}`;
+  return new Date(iso).toLocaleDateString("de-DE");
 }
