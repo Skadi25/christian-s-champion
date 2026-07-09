@@ -16,33 +16,22 @@ export const runDiscovery = createServerFn({ method: "POST" })
   });
 
 const feedSelect =
-  "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, stance, matched_at, status, user_feedback, video:videos(id, platform, external_id, url, title, channel_name, channel_id, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds, language), topic:topics(id, name), claim:claims(id, text)";
+  "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, stance, matched_at, status, user_feedback, video:videos(id, platform, external_id, url, title, channel_name, channel_id, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds, language, raw_metadata), topic:topics(id, name), claim:claims(id, text)";
 
 export const getDiscoveryFeed = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
 
-    const [{ data: matches, error: mErr }, { data: rejected, error: rErr }] =
-      await Promise.all([
-        supabase
-          .from("video_matches")
-          .select(feedSelect)
-          .eq("user_id", userId)
-          .eq("status", "new")
-          .order("opportunity_score", { ascending: false, nullsFirst: false })
-          .limit(100),
-        supabase
-          .from("video_matches")
-          .select(feedSelect)
-          .eq("user_id", userId)
-          .eq("status", "rejected")
-          .order("ai_confidence", { ascending: false, nullsFirst: false })
-          .limit(100),
-      ]);
+    const { data: matches, error: mErr } = await supabase
+      .from("video_matches")
+      .select(feedSelect)
+      .eq("user_id", userId)
+      .in("status", ["new", "accepted", "saved", "rejected"])
+      .order("opportunity_score", { ascending: false, nullsFirst: false })
+      .limit(300);
 
     if (mErr) throw new Error(mErr.message);
-    if (rErr) throw new Error(rErr.message);
 
     const { data: lastRun } = await supabase
       .from("discovery_runs")
@@ -52,9 +41,12 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
       .limit(1)
       .maybeSingle();
 
+    const all = matches ?? [];
     return {
-      matches: matches ?? [],
-      rejected: rejected ?? [],
+      matches: all.filter((m) => m.status === "new"),
+      accepted: all.filter((m) => m.status === "accepted"),
+      saved: all.filter((m) => m.status === "saved"),
+      rejected: all.filter((m) => m.status === "rejected"),
       lastRun: lastRun ?? null,
     };
   });
@@ -71,6 +63,52 @@ export const submitFeedback = createServerFn({ method: "POST" })
     const { submitFeedbackForUser } = await import("./discovery/feedback.server");
     return submitFeedbackForUser(context.userId, data.matchId, data.rating);
   });
+
+const StatusInput = z.object({
+  matchId: z.string().uuid(),
+  status: z.enum(["new", "accepted", "saved", "rejected"]),
+});
+
+export const setMatchStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((raw: unknown) => StatusInput.parse(raw))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { error } = await supabase
+      .from("video_matches")
+      .update({ status: data.status })
+      .eq("id", data.matchId)
+      .eq("user_id", userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+const TikTokInput = z.object({
+  url: z.string().url(),
+  claimId: z.string().uuid(),
+  creator: z.string().optional().nullable(),
+  title: z.string().optional().nullable(),
+  caption: z.string().optional().nullable(),
+  views: z.number().int().nonnegative().optional().nullable(),
+  likes: z.number().int().nonnegative().optional().nullable(),
+  comments: z.number().int().nonnegative().optional().nullable(),
+});
+
+export const addTikTokVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((raw: unknown) => TikTokInput.parse(raw))
+  .handler(async ({ data, context }) => {
+    const { addTikTokVideoForUser } = await import("./discovery/tiktok-import.server");
+    return addTikTokVideoForUser(context.userId, data);
+  });
+
+export const seedDemoMatches = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { seedDemoMatchesForUser } = await import("./discovery/demo-seed.server");
+    return seedDemoMatchesForUser(context.userId);
+  });
+
 
 // ── Pipeline-Trace des letzten Runs ──────────────────────────────────
 export const getLastRunTrace = createServerFn({ method: "GET" })
