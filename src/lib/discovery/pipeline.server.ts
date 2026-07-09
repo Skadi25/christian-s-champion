@@ -235,6 +235,16 @@ export async function runDiscoveryForUser(userId: string) {
       const score = r.score;
       const breakdown = r.breakdown;
 
+      // Prior explicit feedback overrides AI decision when placing into buckets
+      const effectiveStatus =
+        priorFeedback === "relevant"
+          ? "new"
+          : priorFeedback === "not_relevant"
+          ? "rejected"
+          : isMatch
+          ? "new"
+          : "rejected";
+
       const { error: mErr } = await supabaseAdmin.from("video_matches").upsert(
         {
           user_id: userId,
@@ -248,7 +258,8 @@ export async function runDiscoveryForUser(userId: string) {
           ai_summary: ai.summary,
           ai_reasoning: ai.reasoning,
           matched_at: new Date().toISOString(),
-          status: isMatch ? "new" : "rejected",
+          status: effectiveStatus,
+          user_feedback: priorFeedback,
         },
         { onConflict: "user_id,video_id,claim_id" },
       );
@@ -256,7 +267,7 @@ export async function runDiscoveryForUser(userId: string) {
         console.warn("[discovery] Konnte Klassifizierung nicht speichern:", mErr);
         return;
       }
-      if (isMatch) matched++;
+      if (effectiveStatus === "new") matched++;
       else rejected++;
     }
 
