@@ -1,27 +1,28 @@
 import type { PlatformAdapter, PlatformId } from "./types";
 import { createYouTubeAdapter } from "./youtube.server";
+import { createTikTokAdapter } from "./tiktok.server";
+import { createInstagramAdapter } from "./instagram.server";
 
 /**
- * Returns the requested platform adapter. Adding TikTok/Instagram later
- * only means adding a new case here — the rest of the discovery pipeline
- * stays unchanged because it depends solely on the `PlatformAdapter` shape.
+ * Registry — every future platform is added here as a new adapter factory.
+ * Discovery, Latest, Trends and Watchlist only see the adapter interface,
+ * so a new platform is one file + one case.
  */
 export function getPlatformAdapter(id: PlatformId): PlatformAdapter {
   switch (id) {
     case "youtube": {
       const key = process.env.YOUTUBE_API_KEY;
-      if (!key) {
-        throw new Error(
-          "YOUTUBE_API_KEY ist nicht gesetzt. Bitte hinterlege den Key in den Cloud-Secrets.",
-        );
-      }
+      if (!key) throw new Error("YOUTUBE_API_KEY ist nicht gesetzt.");
       return createYouTubeAdapter(key);
     }
     case "tiktok":
+      return createTikTokAdapter();
     case "instagram":
-      throw new Error(
-        `Adapter für "${id}" ist noch nicht implementiert. Kommt in einer späteren Phase.`,
-      );
+      return createInstagramAdapter();
+    case "facebook":
+    case "x":
+    case "threads":
+      throw new Error(`Adapter für "${id}" ist noch nicht implementiert.`);
     default: {
       const _exhaustive: never = id;
       throw new Error(`Unbekannte Plattform: ${_exhaustive}`);

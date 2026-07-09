@@ -1,24 +1,35 @@
 import { getPlatformAdapter } from "@/lib/platforms/registry.server";
-import type { PlatformVideo } from "@/lib/platforms/types";
 import { chatJson, AIGatewayError } from "@/lib/ai/gateway.server";
 import { computeOpportunityScore, type Stance } from "./scoring";
+import { RunTrace } from "./trace";
+import { ensureQueryVariants, type ClaimForQueries } from "./queries";
+import {
+  dedupeCandidates,
+  filterLanguage,
+  filterTimeframe,
+  prefilter,
+  type Candidate,
+} from "./stages";
+import type { PlatformVideo } from "@/lib/platforms/types";
 
-type Claim = {
+const MAX_CLAIMS_PER_RUN = 30;
+const MAX_VIDEOS_PER_QUERY = 150;
+const MAX_CANDIDATE_POOL = 10_000;
+const MAX_CLASSIFICATIONS = 250;
+const LOOKBACK_DAYS = 365; // 12 Monate
+
+type ClaimRow = {
   id: string;
   text: string;
   why_problematic: string | null;
   topic_id: string | null;
   topic_name: string | null;
+  query_variants: string[] | null;
 };
-
-const MAX_CLAIMS_PER_RUN = 25;
-const MAX_VIDEOS_PER_CLAIM = 300; // paginated across relevance/viewCount/date
-const MAX_CANDIDATE_POOL = 5000; // total across all claims
-const MAX_CLASSIFICATIONS = 200; // AI only runs on top-K after prefilter
-const LOOKBACK_DAYS = 60;
 
 export async function runDiscoveryForUser(userId: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const trace = new RunTrace();
 
   const { data: run, error: runErr } = await supabaseAdmin
     .from("discovery_runs")
@@ -29,32 +40,35 @@ export async function runDiscoveryForUser(userId: string) {
   const runId = run.id as string;
 
   try {
+    // ─── 0. Claims laden ─────────────────────────────────────────────
     const { data: claimsRaw, error: claimsErr } = await supabaseAdmin
       .from("claims")
-      .select("id, text, why_problematic, topic_id, topics!inner(id, name, is_active)")
+      .select(
+        "id, text, why_problematic, topic_id, query_variants, topics!inner(id, name, is_active)",
+      )
       .eq("user_id", userId)
       .eq("is_active", true)
       .order("created_at", { ascending: true })
       .limit(MAX_CLAIMS_PER_RUN);
     if (claimsErr) throw new Error(claimsErr.message);
 
-    const claims: Claim[] = (claimsRaw ?? [])
+    const claims: ClaimRow[] = (claimsRaw ?? [])
       .filter((c: { topics: { is_active: boolean } | null }) => c.topics?.is_active !== false)
-      .map(
-        (c: {
-          id: string;
-          text: string;
-          why_problematic: string | null;
-          topic_id: string | null;
-          topics: { name: string } | null;
-        }) => ({
-          id: c.id,
-          text: c.text,
-          why_problematic: c.why_problematic,
-          topic_id: c.topic_id,
-          topic_name: c.topics?.name ?? null,
-        }),
-      );
+      .map((c: {
+        id: string;
+        text: string;
+        why_problematic: string | null;
+        topic_id: string | null;
+        query_variants: unknown;
+        topics: { name: string } | null;
+      }) => ({
+        id: c.id,
+        text: c.text,
+        why_problematic: c.why_problematic,
+        topic_id: c.topic_id,
+        topic_name: c.topics?.name ?? null,
+        query_variants: Array.isArray(c.query_variants) ? (c.query_variants as string[]) : null,
+      }));
 
     if (claims.length === 0) {
       await supabaseAdmin
@@ -68,58 +82,101 @@ export async function runDiscoveryForUser(userId: string) {
       return { runId, scanned: 0, matched: 0, note: "no_claims" as const };
     }
 
-    // 1. Wide sweep: many candidates per claim
+    // ─── 1. Query-Varianten (Cache oder KI) ──────────────────────────
+    const queriesByClaim = new Map<string, string[]>();
+    for (const c of claims) {
+      const claimForQ: ClaimForQueries = {
+        id: c.id,
+        text: c.text,
+        why_problematic: c.why_problematic,
+        topic_name: c.topic_name,
+        query_variants: c.query_variants,
+      };
+      const variants = await ensureQueryVariants(claimForQ, async (v) => {
+        await supabaseAdmin
+          .from("claims")
+          .update({
+            query_variants: v as never,
+            query_variants_generated_at: new Date().toISOString(),
+          })
+          .eq("id", c.id);
+      });
+      queriesByClaim.set(c.id, variants);
+    }
+    const totalQueries = [...queriesByClaim.values()].reduce((s, v) => s + v.length, 0);
+    trace.record("generateQueries", claims.length, totalQueries, {
+      queries_per_claim: [...queriesByClaim.entries()].map(([id, q]) => ({
+        claim_id: id,
+        count: q.length,
+      })),
+    });
+
+    // ─── 2. Wide Sweep (YouTube) ─────────────────────────────────────
     const adapter = getPlatformAdapter("youtube");
     const publishedAfter = new Date(Date.now() - LOOKBACK_DAYS * 24 * 3_600_000).toISOString();
+    const queryHits: Array<{ claim_id: string; query: string; hits: number }> = [];
+    const collected: Candidate[] = [];
 
-    type Candidate = { video: PlatformVideo; claim: Claim };
-    const uniqueByVideoClaim = new Map<string, Candidate>();
-    let poolCount = 0;
-
-    for (const claim of claims) {
-      if (poolCount >= MAX_CANDIDATE_POOL) break;
-      try {
-        const videos = await adapter.search({
-          query: claim.text,
-          maxResults: MAX_VIDEOS_PER_CLAIM,
-          publishedAfter,
-          language: "de",
-          region: "DE",
-        });
-        for (const v of videos) {
-          const key = `${v.platform}:${v.external_id}:${claim.id}`;
-          if (uniqueByVideoClaim.has(key)) continue;
-          uniqueByVideoClaim.set(key, { video: v, claim });
-          poolCount++;
-          if (poolCount >= MAX_CANDIDATE_POOL) break;
+    outer: for (const claim of claims) {
+      const variants = queriesByClaim.get(claim.id) ?? [claim.text];
+      for (const query of variants) {
+        if (collected.length >= MAX_CANDIDATE_POOL) break outer;
+        try {
+          const videos = await adapter.search({
+            query,
+            maxResults: MAX_VIDEOS_PER_QUERY,
+            publishedAfter,
+            language: "de",
+            region: "DE",
+          });
+          queryHits.push({ claim_id: claim.id, query, hits: videos.length });
+          for (const v of videos) {
+            collected.push({ video: v, claim, source_query: query });
+            if (collected.length >= MAX_CANDIDATE_POOL) break;
+          }
+        } catch (e) {
+          queryHits.push({ claim_id: claim.id, query, hits: 0 });
+          console.warn(`[discovery] search failed "${query}":`, e);
         }
-      } catch (e) {
-        console.warn(`[discovery] Suche fehlgeschlagen für "${claim.text}":`, e);
       }
     }
+    trace.record("fetchCandidates", totalQueries, collected.length, {
+      pool_cap: MAX_CANDIDATE_POOL,
+      query_hits: queryHits,
+    });
 
-    const allCandidates = [...uniqueByVideoClaim.values()];
+    // ─── 3. Dedupe → Zeitraum → Sprache ──────────────────────────────
+    let candidates = dedupeCandidates(collected, trace);
+    candidates = filterTimeframe(candidates, LOOKBACK_DAYS, trace);
+    candidates = filterLanguage(candidates, trace);
 
-    // 2. Learned preferences (channel + stance + prior video feedback)
-    const [{ data: channelPrefs }, { data: stancePrefs }] = await Promise.all([
-      supabaseAdmin
-        .from("channel_preferences")
-        .select("channel_id, channel_name, affinity, positive_count, negative_count")
-        .eq("user_id", userId),
-      supabaseAdmin
-        .from("stance_preferences")
-        .select("stance, affinity, positive_count, negative_count")
-        .eq("user_id", userId),
-    ]);
+    // ─── 4. Learned preferences laden ────────────────────────────────
+    const [{ data: channelPrefs }, { data: stancePrefs }, { data: claimStancePrefs }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("channel_preferences")
+          .select("channel_id, channel_name, affinity, positive_count, negative_count")
+          .eq("user_id", userId),
+        supabaseAdmin
+          .from("stance_preferences")
+          .select("stance, affinity, positive_count, negative_count")
+          .eq("user_id", userId),
+        supabaseAdmin
+          .from("claim_stance_preferences")
+          .select("claim_id, stance, affinity")
+          .eq("user_id", userId),
+      ]);
 
     const affinityByChannel = new Map<string, number>();
     for (const p of channelPrefs ?? []) {
       if (p.channel_id) affinityByChannel.set(p.channel_id, Number(p.affinity) || 0);
     }
     const affinityByStance = new Map<Stance, number>();
-    for (const p of stancePrefs ?? []) {
-      affinityByStance.set(p.stance as Stance, Number(p.affinity) || 0);
-    }
+    for (const p of stancePrefs ?? []) affinityByStance.set(p.stance as Stance, Number(p.affinity) || 0);
+    const affinityByClaimStance = new Map<string, number>();
+    for (const p of claimStancePrefs ?? [])
+      affinityByClaimStance.set(`${p.claim_id}:${p.stance}`, Number(p.affinity) || 0);
+
     const topLiked = (channelPrefs ?? [])
       .filter((p) => (p.positive_count ?? 0) > 0)
       .sort((a, b) => Number(b.affinity ?? 0) - Number(a.affinity ?? 0))
@@ -132,44 +189,17 @@ export async function runDiscoveryForUser(userId: string) {
       .slice(0, 5)
       .map((p) => p.channel_name)
       .filter(Boolean) as string[];
+    const dislikedStances = [...affinityByStance.entries()].filter(([, a]) => a < -0.2).map(([s]) => s);
+    const likedStances = [...affinityByStance.entries()].filter(([, a]) => a > 0.2).map(([s]) => s);
 
-    // 3. Heuristic prefilter → top MAX_CLASSIFICATIONS candidates for the AI
-    function heuristic(c: Candidate): number {
-      const v = c.video;
-      const views = v.view_count ?? 0;
-      const reach = Math.min(1, Math.log10(views + 1) / 7);
-      const hours = v.published_at
-        ? Math.max(1, (Date.now() - new Date(v.published_at).getTime()) / 3_600_000)
-        : 24 * 30;
-      const recency = hours <= 24 * 30 ? 1 - hours / (24 * 30) : 0;
-      const lang = (v.language ?? "").toLowerCase();
-      const langBoost = lang.startsWith("de") ? 1 : lang === "" ? 0.6 : 0.2;
-      const chAff = v.channel_id ? affinityByChannel.get(v.channel_id) ?? 0 : 0;
-      const claimWords = c.claim.text
-        .toLowerCase()
-        .split(/\W+/)
-        .filter((w) => w.length > 3);
-      const hay = `${v.title} ${v.description ?? ""}`.toLowerCase();
-      const hits = claimWords.filter((w) => hay.includes(w)).length;
-      const claimFit = claimWords.length > 0 ? hits / claimWords.length : 0.5;
-      return (
-        reach * 0.35 +
-        recency * 0.15 +
-        langBoost * 0.15 +
-        claimFit * 0.25 +
-        ((chAff + 1) / 2) * 0.1
-      );
-    }
+    // ─── 5. Prefilter → Shortlist für KI ─────────────────────────────
+    const shortlist = prefilter(candidates, MAX_CLASSIFICATIONS, affinityByChannel, trace);
+    const prefilteredOutIds = new Set(candidates.map((c) => `${c.video.external_id}:${c.claim.id}`));
+    for (const s of shortlist) prefilteredOutIds.delete(`${s.video.external_id}:${s.claim.id}`);
 
-    const ranked = allCandidates
-      .map((c) => ({ c, h: heuristic(c) }))
-      .sort((a, b) => b.h - a.h);
-    const shortlist = ranked.slice(0, MAX_CLASSIFICATIONS).map((r) => r.c);
-
-    // 4. Upsert only shortlisted videos into DB
+    // ─── 6. Videos upserten (nur Shortlist) ─────────────────────────
     const uniqueVideos = new Map<string, PlatformVideo>();
-    for (const c of shortlist)
-      uniqueVideos.set(`${c.video.platform}:${c.video.external_id}`, c.video);
+    for (const c of shortlist) uniqueVideos.set(`${c.video.platform}:${c.video.external_id}`, c.video);
     const videoIdByExternal = new Map<string, string>();
     if (uniqueVideos.size > 0) {
       const { data: upserted, error: upErr } = await supabaseAdmin
@@ -197,8 +227,17 @@ export async function runDiscoveryForUser(userId: string) {
         )
         .select("id, platform, external_id");
       if (upErr) throw new Error(`Video-Upsert fehlgeschlagen: ${upErr.message}`);
-      for (const v of upserted ?? [])
-        videoIdByExternal.set(`${v.platform}:${v.external_id}`, v.id);
+      for (const v of upserted ?? []) videoIdByExternal.set(`${v.platform}:${v.external_id}`, v.id);
+
+      // Snapshot pro Video für Trend-Wachstum
+      await supabaseAdmin.from("video_stats_snapshots").insert(
+        [...uniqueVideos.values()].map((v) => ({
+          video_id: videoIdByExternal.get(`${v.platform}:${v.external_id}`)!,
+          view_count: v.view_count,
+          like_count: v.like_count,
+          comment_count: v.comment_count,
+        })).filter((r) => r.video_id) as never,
+      );
     }
 
     const feedbackByVideoClaim = new Map<string, "relevant" | "neutral" | "not_relevant">();
@@ -218,45 +257,31 @@ export async function runDiscoveryForUser(userId: string) {
       }
     }
 
-    // 5. Classify each shortlisted candidate (stance-aware) with concurrency
+    // ─── 7. KI klassifiziert Shortlist ───────────────────────────────
     const CONCURRENCY = 8;
     let matched = 0;
     let rejected = 0;
     let aiErrors = 0;
-    const stanceStats: Record<Stance, number> = {
-      promotes: 0,
-      mentions: 0,
-      debunks: 0,
-      unrelated: 0,
-    };
+    const stanceStats: Record<Stance, number> = { promotes: 0, mentions: 0, debunks: 0, unrelated: 0 };
     const queue = [...shortlist];
 
-    const dislikedStances = [...affinityByStance.entries()]
-      .filter(([, a]) => a < -0.2)
-      .map(([s]) => s);
-    const likedStances = [...affinityByStance.entries()]
-      .filter(([, a]) => a > 0.2)
-      .map(([s]) => s);
-
     const preferenceHint =
-      `Nutzerpräferenz (aus vergangenem Feedback): bevorzugte Kanäle: ${topLiked.join(", ") || "—"}. Abgelehnte Kanäle: ${topDisliked.join(", ") || "—"}. Bevorzugte Stance-Typen: ${likedStances.join(", ") || "—"}. Abgelehnte Stance-Typen: ${dislikedStances.join(", ") || "—"}. Deutschsprachige Videos werden generell bevorzugt.`;
+      `Nutzerpräferenz: bevorzugte Kanäle: ${topLiked.join(", ") || "—"}. Abgelehnte Kanäle: ${topDisliked.join(", ") || "—"}. Bevorzugte Stances: ${likedStances.join(", ") || "—"}. Abgelehnte Stances: ${dislikedStances.join(", ") || "—"}. Deutschsprachige Videos werden generell bevorzugt.`;
 
     async function classifyAndStore(cand: Candidate) {
-      const videoDbId = videoIdByExternal.get(
-        `${cand.video.platform}:${cand.video.external_id}`,
-      );
+      const videoDbId = videoIdByExternal.get(`${cand.video.platform}:${cand.video.external_id}`);
       if (!videoDbId) return;
 
       let ai: { stance: Stance; confidence: number; summary: string; reasoning: string };
       try {
         ai = await chatJson<typeof ai>({
           system:
-            "Du bist Faktenchecker. Bestimme die HALTUNG des Videos zur genannten Falschaussage. Antworte STRICT als JSON mit den Feldern:\n" +
-            '- stance: "promotes" (Video vertritt/verbreitet die Falschaussage aktiv als wahr), "mentions" (erwähnt sie neutral ohne zu werten), "debunks" (widerlegt die Falschaussage), "unrelated" (Video geht nicht darum)\n' +
+            "Du bist Faktenchecker. Bestimme die HALTUNG des Videos zur Falschaussage. Antworte STRICT als JSON:\n" +
+            '- stance: "promotes" (vertritt/verbreitet aktiv), "mentions" (erwähnt neutral), "debunks" (widerlegt / bringt Fakten dagegen / Faktencheck / zitiert Studien dagegen), "unrelated"\n' +
             "- confidence: 0-1\n" +
             "- summary: 1 kurzer deutscher Satz\n" +
-            "- reasoning: 1-2 Sätze deutsch, warum die Stance so eingestuft wurde\n\n" +
-            "WICHTIG: Ein Video, das die Falschaussage widerlegt (Fakten dagegen bringt, richtigstellt, wissenschaftliche Studien zitiert die dagegen sprechen), ist IMMER 'debunks' — auch wenn der Titel wie eine Behauptung klingt (Clickbait). " +
+            "- reasoning: 1-2 Sätze deutsch\n\n" +
+            "WICHTIG: Debunk-Signale sind u.a. 'Studie zeigt …', 'Faktencheck', 'falsch, weil …', 'Mythos widerlegt'. Auch wenn der Titel wie eine Behauptung klingt (Clickbait), gilt das Video als 'debunks', sobald es die Falschaussage widerlegt. " +
             preferenceHint,
           user: JSON.stringify({
             falschaussage: cand.claim.text,
@@ -270,23 +295,20 @@ export async function runDiscoveryForUser(userId: string) {
         });
       } catch (e) {
         if (e instanceof AIGatewayError && e.status === 402) throw e;
-        console.warn("[discovery] AI-Klassifizierung fehlgeschlagen:", e);
+        console.warn("[discovery] AI failed:", e);
         aiErrors++;
         return;
       }
 
-      const stance: Stance = (["promotes", "mentions", "debunks", "unrelated"] as const).includes(
-        ai.stance,
-      )
+      const stance: Stance = (["promotes", "mentions", "debunks", "unrelated"] as const).includes(ai.stance)
         ? ai.stance
         : "unrelated";
       stanceStats[stance]++;
 
       const priorFeedback = feedbackByVideoClaim.get(`${videoDbId}:${cand.claim.id}`) ?? null;
-      const channelAffinity = cand.video.channel_id
-        ? affinityByChannel.get(cand.video.channel_id) ?? null
-        : null;
+      const channelAffinity = cand.video.channel_id ? affinityByChannel.get(cand.video.channel_id) ?? null : null;
       const stanceAffinity = affinityByStance.get(stance) ?? null;
+      const claimStanceAffinity = affinityByClaimStance.get(`${cand.claim.id}:${stance}`) ?? null;
 
       const r = computeOpportunityScore({
         view_count: cand.video.view_count,
@@ -298,11 +320,10 @@ export async function runDiscoveryForUser(userId: string) {
         stance,
         channel_affinity: channelAffinity,
         stance_affinity: stanceAffinity,
+        claim_stance_affinity: claimStanceAffinity,
         user_feedback: priorFeedback,
       });
 
-      // Nur "promotes" ist ein echter Match. "mentions" landet bei mittlerer Confidence
-      // auch bei den priorisierten Videos, aber mit deutlich niedrigerem Score.
       const isMatch =
         priorFeedback === "relevant"
           ? true
@@ -333,7 +354,7 @@ export async function runDiscoveryForUser(userId: string) {
         { onConflict: "user_id,video_id,claim_id" },
       );
       if (mErr) {
-        console.warn("[discovery] Konnte Klassifizierung nicht speichern:", mErr);
+        console.warn("[discovery] persist match failed:", mErr);
         return;
       }
       if (effectiveStatus === "new") matched++;
@@ -354,6 +375,28 @@ export async function runDiscoveryForUser(userId: string) {
     }
     await Promise.all(workers);
 
+    trace.record("classify", shortlist.length, matched + rejected, {
+      matched,
+      rejected,
+      ai_errors: aiErrors,
+      stance_stats: stanceStats,
+    });
+
+    // ─── 8. Trace persistieren ───────────────────────────────────────
+    if (trace.stages.length > 0) {
+      await supabaseAdmin.from("discovery_run_stages").insert(
+        trace.stages.map((s, i) => ({
+          run_id: runId,
+          user_id: userId,
+          stage_index: i,
+          stage_name: s.stage,
+          input_count: s.input,
+          output_count: s.output,
+          meta: (s.meta ?? null) as never,
+        })) as never,
+      );
+    }
+
     await supabaseAdmin
       .from("discovery_runs")
       .update({
@@ -366,12 +409,14 @@ export async function runDiscoveryForUser(userId: string) {
 
     return {
       runId,
-      poolSize: allCandidates.length,
+      poolSize: collected.length,
+      afterDedupe: candidates.length,
       scanned: shortlist.length,
       matched,
       rejected,
       aiErrors,
       claimsUsed: claims.length,
+      totalQueries,
       stanceStats,
       note: "ok" as const,
     };
@@ -381,6 +426,20 @@ export async function runDiscoveryForUser(userId: string) {
       .from("discovery_runs")
       .update({ status: "error", finished_at: new Date().toISOString(), error: msg })
       .eq("id", runId);
+    // Auch bei Fehler die bisherigen Stages speichern
+    if (trace.stages.length > 0) {
+      await supabaseAdmin.from("discovery_run_stages").insert(
+        trace.stages.map((s, i) => ({
+          run_id: runId,
+          user_id: userId,
+          stage_index: i,
+          stage_name: s.stage,
+          input_count: s.input,
+          output_count: s.output,
+          meta: (s.meta ?? null) as never,
+        })) as never,
+      );
+    }
     throw e;
   }
 }

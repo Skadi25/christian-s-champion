@@ -14,7 +14,7 @@ export async function submitFeedbackForUser(userId: string, matchId: string, rat
   const { data: match, error: loadErr } = await supabaseAdmin
     .from("video_matches")
     .select(
-      "id, user_id, user_feedback, ai_confidence, stance, video:videos(id, channel_id, channel_name, view_count, like_count, comment_count, published_at, language)",
+      "id, user_id, claim_id, user_feedback, ai_confidence, stance, video:videos(id, channel_id, channel_name, view_count, like_count, comment_count, published_at, language)",
     )
     .eq("id", matchId)
     .maybeSingle();
@@ -86,10 +86,47 @@ export async function submitFeedbackForUser(userId: string, matchId: string, rat
     );
   }
 
-  // 2. Stance affinity (global — this is how the system "learns you don't like debunks")
+  // 2. Stance affinity (global)
   let newStanceAffinity: number | null = null;
   if (stance) {
     newStanceAffinity = await bumpCounts("stance_preferences", { stance }, {});
+  }
+
+  // 2b. Claim × Stance affinity (per-claim learning signal)
+  const claimId = (match as { claim_id?: string | null }).claim_id ?? null;
+  if (stance && claimId) {
+    const { data: existing } = await supabaseAdmin
+      .from("claim_stance_preferences")
+      .select("positive_count, negative_count, neutral_count")
+      .eq("user_id", userId)
+      .eq("claim_id", claimId)
+      .eq("stance", stance)
+      .maybeSingle();
+    let pos = existing?.positive_count ?? 0;
+    let neg = existing?.negative_count ?? 0;
+    let neu = existing?.neutral_count ?? 0;
+    if (previous === "relevant") pos = Math.max(0, pos - 1);
+    else if (previous === "not_relevant") neg = Math.max(0, neg - 1);
+    else if (previous === "neutral") neu = Math.max(0, neu - 1);
+    if (rating === "relevant") pos += 1;
+    else if (rating === "not_relevant") neg += 1;
+    else neu += 1;
+    const total = pos + neg + neu;
+    const affinity = total > 0 ? (pos - neg) / total : 0;
+    await supabaseAdmin
+      .from("claim_stance_preferences")
+      .upsert(
+        {
+          user_id: userId,
+          claim_id: claimId,
+          stance,
+          positive_count: pos,
+          negative_count: neg,
+          neutral_count: neu,
+          affinity,
+        } as never,
+        { onConflict: "user_id,claim_id,stance" },
+      );
   }
 
   // 3. Re-score this match

@@ -1,126 +1,163 @@
-## Phase 2: Discovery, Claim-Erkennung & Opportunity Score
 
-Ziel: Nach dem Login sieht Chris in wenigen Sekunden echte YouTube-Videos zu seinen Claims, priorisiert nach einem transparenten Opportunity Score.
+# Discovery v2 — Professionelle SaaS-Struktur
 
----
+Ziel: bestehende Discovery nicht ersetzen, sondern modular ausbauen. Grundlage für YouTube, TikTok, Instagram, Facebook, X, Threads. Jede Plattform = ein Adapter. Discovery, Neueste, Trends und Watchlist teilen sich einen gemeinsamen Kandidaten-Pool.
 
-### 1. YouTube API-Zugang
+## 1. Navigation & neue Routen
 
-Für YouTube Data API v3 brauchen wir einen API-Key (kostenlos, 10.000 Requests/Tag).
+Die App-Shell bekommt vier Bereiche (Sidebar/Tabs):
 
-**Was du tun musst (dauert ~3 Minuten):**
-1. Auf https://console.cloud.google.com ein Projekt erstellen
-2. "YouTube Data API v3" aktivieren
-3. Unter "Credentials" → "API Key" erstellen
-4. Ich frage dich den Key danach über ein sicheres Formular ab und speichere ihn als `YOUTUBE_API_KEY`.
+- `/_authenticated/dashboard` → 🔥 **Discovery** (bleibt, aber aufgeräumt)
+- `/_authenticated/latest` → 🆕 **Neueste Videos** (24h / 7d / 30d)
+- `/_authenticated/trends` → 📈 **Trends** (Wachstums-Ranking)
+- `/_authenticated/watchlist` → ❤️ **Watchlist** (Kanäle & Videos)
 
-Für die KI-Analyse (Claim-Matching) nutzen wir Lovable AI — kein zusätzlicher Key nötig.
+Alle vier Seiten lesen aus derselben Datenbasis (`videos` + `video_matches`), nur mit unterschiedlichen Queries/Sortierung. Keine parallele Discovery-Logik pro Seite.
 
----
+## 2. Plattform-Architektur (multi-platform ready)
 
-### 2. Plattform-agnostische Architektur
+Ausbau der bestehenden `PlatformAdapter`-Schnittstelle, damit später TikTok/Instagram/… nur neue Dateien sind:
 
 ```text
 src/lib/platforms/
-├── types.ts              → gemeinsame Interfaces (Video, SearchQuery, PlatformAdapter)
-├── youtube.server.ts     → YouTube-Implementierung
-└── registry.server.ts    → mapt "youtube" → Adapter, später "tiktok", "instagram"
+  types.ts                 // PlatformAdapter, PlatformVideo, SearchQuery, TrendingQuery
+  registry.server.ts       // getPlatformAdapter(id), getEnabledPlatforms()
+  youtube.server.ts        // implementiert search + fetchLatest + fetchTrending + fetchChannel
+  tiktok.server.ts         // (Stub, throws "not implemented" — Adapter-Slot vorbereitet)
+  instagram.server.ts      // (Stub)
 ```
 
-Alle folgenden Server-Funktionen arbeiten nur mit dem generischen Interface. TikTok/Instagram später = neuer Adapter, keine UI-Änderung.
+Neu im Interface: `fetchLatest`, `fetchChannelVideos`, `fetchVideoStats` (für Watchlist-Refresh & Trend-Wachstum). Discovery/Latest/Trends rufen NUR das Adapter-Interface auf.
 
----
+## 3. Discovery-Pipeline (modular, mit Debug-Trace)
 
-### 3. Datenbank-Erweiterung (Migration)
-
-- `videos`: `transcript` (text, nullable), `raw_metadata` (jsonb)
-- `video_matches`: `matched_at`, `ai_summary` (text), `ai_reasoning` (text)
-- Neue Tabelle `discovery_runs` — Log pro Discovery-Lauf (welcher User, wann, wie viele Videos gefunden), für Transparenz und Debugging
-- Grants + RLS wie bisher
-
----
-
-### 4. Discovery-Pipeline (Server Functions)
-
-**`runDiscovery(userId)`** — der Kern:
+Zerlegung der monolithischen `pipeline.server.ts` in klar benannte Stages unter `src/lib/discovery/`:
 
 ```text
-1. Lade alle aktiven Themen + Claims des Users
-2. Für jeden Claim → generiere Suchqueries per KI (2-3 pro Claim, deutsch)
-   Beispiel: "Kreatin schädigt die Nieren" →
-     ["kreatin nieren", "kreatin nebenwirkungen niere", "creatin gefahr"]
-3. Für jede Query → YouTube-Suche (letzte 7 Tage, DE, sortiert nach Views)
-4. Videos + Metadaten in videos-Tabelle upserten (unique auf platform+external_id)
-5. Für jedes neue Video → KI prüft: enthält Titel/Beschreibung diesen Claim?
-   Strukturierter Output: { matches: bool, confidence: 0-1, summary, reasoning }
-6. Bei match=true → video_matches-Eintrag + Opportunity Score berechnen
-7. discovery_runs-Eintrag schreiben
+src/lib/discovery/
+  pipeline.server.ts       // Orchestrator: ruft die Stages in Reihenfolge auf
+  stages/
+    generateQueries.server.ts   // Claim → mehrere Suchanfragen (Synonyme, Umformulierungen, Hashtags)
+    fetchCandidates.server.ts   // Adapter.search paginiert (12 Monate, 3 Sort-Orders)
+    dedupe.ts                   // nach platform+external_id + Fuzzy-Title
+    filterLanguage.ts           // DE bevorzugt, EN abgewertet (nicht gestrichen)
+    filterTimeframe.ts          // published_at innerhalb LOOKBACK
+    prefilter.ts                // Heuristik-Score → Top-K für KI
+    classify.server.ts          // KI: stance + confidence + summary + reasoning
+    score.ts                    // Opportunity Score (Stance-dominiert)
+    persist.server.ts           // Upsert videos + video_matches + run_stages
+  scoring.ts               // (bleibt, wird verfeinert)
+  queries.ts               // Synonym-/Umformulierungsregeln
 ```
 
-**Opportunity Score (0-100), transparent aufschlüsselbar:**
+Jede Stage erhält den Kandidatenstrom **und** einen `RunTrace`, in dem sie eintragen kann:
+- Stage-Name
+- Input-Count / Output-Count
+- verwendete Queries (bei fetchCandidates)
+- Verworfen-Gründe (bei dedupe/filter/prefilter)
 
-```text
-score = reach(35) + growth(25) + recency(15) + engagement(15) + confidence(10)
+Der `RunTrace` wird pro Run in einer neuen Tabelle `discovery_run_stages` persistiert, damit UI und Debug-Ansicht die Pipeline nachvollziehbar zeigen.
 
-reach       = log-normalisiert auf view_count
-growth      = views / (Stunden seit Upload) — virale Videos
-recency     = 100 bei <24h, linear fallend auf 0 bei 7 Tagen
-engagement  = (likes + comments) / views
-confidence  = KI-Confidence des Claim-Matches
-```
+### Query-Generierung (Claim → viele Anfragen)
+Für jeden Claim werden mehrere Queries erzeugt:
+- Original-Claim
+- KI-generierte 3–5 Umformulierungen inkl. Synonyme (einmal pro Claim, gecached in `claims.query_variants`)
+- Hashtag-Varianten für spätere Plattformen
 
-score_breakdown wird als JSON gespeichert → im UI später aufklappbar ("Warum diese Priorität?").
+Pro Query mehrere Sort-Orders (`relevance`, `date`, `viewCount`) und Pagination bis LOOKBACK 12 Monate — begrenzt durch Adapter-Quota, nicht durch feste "150 Videos".
 
-**KI-Modell:** `google/gemini-3-flash-preview` mit strukturiertem Output (Zod-Schema). Schnell + günstig für Klassifizierung.
+### KI-Kostenkontrolle
+- Wide Sweep sammelt **beliebig viele** Kandidaten (mehrere Tausend möglich)
+- Dedupe + Prefilter reduzieren auf `MAX_CLASSIFICATIONS` (Default 200, konfigurierbar pro User)
+- Nur diese Shortlist wird an das KI-Gateway geschickt
+- Alle anderen Kandidaten bleiben mit Status `prefiltered_out` sichtbar im Debug-Trace
 
----
+## 4. Stance-Erkennung (Kernbewertung)
 
-### 5. Auslösen der Discovery
+Bleibt bei den vier Kategorien:
+- 🔴 `promotes` (Verbreitet)
+- 🟡 `mentions` (Erwähnt)
+- 🟢 `debunks` (Widerlegt)
+- ⚪ `unrelated` (Neutral / geht nicht darum)
 
-Für die Demo: manueller Button "Jetzt aktualisieren" im Dashboard, der `runDiscovery` per `useServerFn` triggert. Loading-State mit Progress-Text ("Suche Videos zu 12 Claims…").
+Stance ist mit ~45 % der dominanteste Score-Faktor; Debunk-Videos sind bei 25 gedeckelt (bereits vorhanden — bleibt).
 
-Später (nicht Phase 2): `pg_cron`-Job der jede Nacht automatisch für alle User läuft. Architektur ist bereits vorbereitet.
+Zusätzlich: KI-Prompt bekommt konkrete Debunk-Signale (z.B. „Studie zeigt …", „Faktencheck", „falsch, weil …") als Beispiele, um Clickbait-Titel korrekt einzuordnen.
 
----
+## 5. Learning System (dauerhaft)
 
-### 6. Discovery-UI (Dashboard erweitern)
+Bestehende Tabellen `channel_preferences` und `stance_preferences` bleiben. Ergänzt um:
+- `claim_stance_preferences` (user × claim × stance): merkt sich, dass Nutzer X für Claim Y „debunks" konsequent ablehnt
+- Feedback wirkt direkt auf zukünftige Runs (KI-Prompt-Kontext + Score-Modifier), nicht nur global
 
-Das aktuelle Übersichts-Layout bleibt, wird aber mit echten Daten gefüllt:
+## 6. Verbesserter Opportunity Score
 
-- **Header:** "Jetzt aktualisieren"-Button + "Zuletzt aktualisiert vor 3 Min"
-- **Stat-Karten:** echte Zahlen (neue Videos heute, Ø Score, höchste Wachstumsrate)
-- **Video-Feed** (neue Sektion, nach den Übersichtskarten):
-  - Karten sortiert nach Opportunity Score, absteigend
-  - Pro Karte: Thumbnail · Titel · Kanal · 🔥 Score (groß, farbig) · 👁 Views · 📈 Wachstum/h · ⏱ Alter · Themen-Tag
-  - Erkannter Claim + KI-Summary ("Behauptet ab 2:14, dass Kreatin die Nieren schädigt")
-  - Aufklappbar: Score-Breakdown (welcher Faktor wie beigetragen hat)
-  - Buttons: "Auf YouTube öffnen" · "Reaktion vorbereiten" (Placeholder für Phase 3)
-- **Filter:** nach Thema, nach Score-Schwelle, nach Alter
-- **Leerer Zustand:** "Noch keine Videos gefunden. Starte deinen ersten Discovery-Lauf."
+`scoring.ts` wird um zwei Faktoren erweitert:
+- **Viralität**: `views / hoursSinceUpload` normalisiert gegen Kanal-Median → belohnt kleine, schnell wachsende Videos
+- **Kanalgröße**: Subscriber-Bucket (klein/mittel/groß) — leicht positiv für kleine Kanäle mit Wachstum, damit sie nicht von Mega-Kanälen erdrückt werden
 
----
+Debunk/Unrelated-Caps bleiben hart.
 
-### 7. Fehlerbehandlung
+## 7. Neueste-Videos-Seite
 
-- Fehlender/ungültiger YouTube-Key → klare Meldung im UI mit Link zum Setup
-- YouTube-Quota erreicht (403) → verständliche Fehlermeldung, Retry morgen
-- Lovable AI Rate Limit (429) → einzelne Videos werden übersprungen, Rest läuft weiter
-- Lovable AI Credits erschöpft (402) → Toast mit Hinweis auf Settings → Plans & credits
+Query: `videos` join `video_matches` per user, sortiert nach `published_at DESC`, Filter 24h / 7d / 30d. Kein Score, nur Chronologie. Nutzt denselben Kandidatenpool.
 
----
+## 8. Trends-Seite
 
-### Nach Phase 2
+Zeigt Videos mit höchstem `growth_score` (views/h, ggf. Delta zwischen zwei Fetches). Damit Deltas möglich werden: neue Tabelle `video_stats_snapshots` (video_id, captured_at, views, likes, comments). Snapshot pro Discovery-Run, zusätzlich täglicher Refresh für Watchlist-Videos.
 
-Chris kann in der App:
-- Themen + Claims verwalten (fertig)
-- Auf einen Knopf drücken und echte YouTube-Videos zu seinen Claims sehen
-- Sofort erkennen, welche am wichtigsten sind (Score + Aufschlüsselung)
-- Direkt zu YouTube springen
+## 9. Watchlist
 
-Phase 3 baut dann darauf auf: Video-Detailseite mit KI-generiertem Reaktionsentwurf + wissenschaftlichen Quellen.
+Neue Tabelle `watchlist_items`:
+- `user_id`, `kind` (`channel` | `video`), `platform`, `external_id`, `label`, `created_at`
+- Cron/refresh-Server-Fn ruft Adapter.fetchChannelVideos / fetchVideoStats
+- Neue Uploads dieser Kanäle landen als Kandidaten im nächsten Discovery-Lauf
 
----
+UI: Kanal per YouTube-URL hinzufügen, Video-Karten mit „Watchen"-Button überall.
 
-### Frage an dich
+## 10. Debug-Panel
 
-Bist du bereit, den YouTube-API-Key zu besorgen (Anleitung in Punkt 1)? Sobald du bestätigst, starte ich mit der Implementierung — Reihenfolge: Architektur & DB → YouTube-Adapter → Discovery-Pipeline → UI. Sag mir am Ende einfach Bescheid, wenn du den Key hast, dann öffne ich das Formular zum sicheren Speichern.
+Auf `/dashboard` ein aufklappbares Panel „Pipeline-Details des letzten Runs":
+- Tabelle der Stages mit In → Out
+- Liste aller verwendeten Suchanfragen und deren Trefferzahl
+- Aussortierte Videos mit Grund (`language`, `too_old`, `duplicate`, `prefiltered`, `ai_debunks`, `ai_unrelated`, …)
+
+Nie mehr „Pool 0" ohne Kontext.
+
+## 11. Datenbank-Migrationen
+
+Eine neue Migration mit:
+- `claims.query_variants` (jsonb, cache der KI-Umformulierungen)
+- `discovery_run_stages` (run_id, stage, input_count, output_count, meta jsonb)
+- `video_stats_snapshots`
+- `watchlist_items`
+- `claim_stance_preferences`
+- Grants + RLS pro Tabelle nach Standardmuster
+
+## 12. Umsetzungsschritte (in dieser Reihenfolge)
+
+1. Migration (alle neuen Tabellen + Grants + RLS)
+2. `platforms/types.ts` & `youtube.server.ts` um `fetchLatest`, `fetchChannelVideos`, `fetchVideoStats` erweitern; Stubs für TikTok/Instagram
+3. Pipeline in Stages zerlegen, `RunTrace` einführen, in DB persistieren
+4. Query-Generator (`queries.ts` + KI-Cache in `claims.query_variants`)
+5. Scoring um Viralität + Kanalgröße erweitern
+6. Server-Fns: `runDiscovery` (bleibt), `getLatestVideos`, `getTrendingVideos`, `getWatchlist`, `addToWatchlist`, `removeFromWatchlist`, `refreshWatchlist`, `getRunTrace`
+7. UI: Sidebar/Navigation (App-Shell), vier Route-Dateien, gemeinsame Video-Card-Komponente extrahieren
+8. Debug-Panel im Dashboard
+9. `AGENTS.md`-artige Kurzdoku unter `src/lib/discovery/README.md`, wie ein neuer Plattform-Adapter registriert wird
+
+## Technische Hinweise
+
+- Alles Server-only läuft in `createServerFn` mit `requireSupabaseAuth`; kein Edge-Function-Umweg.
+- YouTube-Adapter erhält Rate-Limit-Backoff (bei 403 quota → sauber abbrechen, Trace zeigt Quota-Ende).
+- KI-Aufrufe bleiben Concurrency-limited (8 parallel) — nur die Shortlist wird klassifiziert.
+- Kein Breaking Change an bestehenden Tabellen; nur additiv.
+
+## Frage vor Umsetzung
+
+Der Umbau ist groß (Migration + ~15 Dateien). Soll ich in **einem Schritt** die komplette v2 ausliefern, oder lieber in **zwei Phasen**:
+
+- **Phase A** (jetzt): Pipeline-Refactor + Debug-Trace + Query-Generator + verbessertes Scoring (Discovery wird sofort deutlich besser & nachvollziehbar)
+- **Phase B** (danach): Neueste-, Trends-, Watchlist-Seiten + Multi-Plattform-Stubs
+
+Bitte kurz bestätigen: „alles auf einmal" oder „Phase A zuerst".
