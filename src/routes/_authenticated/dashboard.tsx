@@ -398,13 +398,10 @@ function VideoMatchCard({
             >
               <ExternalLink className="h-3.5 w-3.5" /> Auf {v?.platform === "youtube" ? "YouTube" : "der Plattform"} öffnen
             </a>
-            <button
-              disabled
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-muted-foreground"
-              title="Kommt in Phase 3"
-            >
-              ✍️ Reaktion vorbereiten
-            </button>
+            <FeedbackButtons
+              matchId={match.id}
+              current={(match.user_feedback as FeedbackRating | null) ?? null}
+            />
             <button
               onClick={onToggle}
               className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
