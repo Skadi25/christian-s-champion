@@ -147,6 +147,7 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
 
           const url = `${SEARCH_URL}?${params}`;
           const res = await fetch(url);
+          const apiKeyTail = apiKey.slice(-4);
           if (!res.ok) {
             const body = await res.text().catch(() => "");
             debug?.push({
@@ -156,8 +157,12 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
               page,
               items_returned: 0,
               ids_collected_so_far: ids.length,
+              api_key_tail: apiKeyTail,
               error: (body || res.statusText).slice(0, 300),
             });
+            if (isQuotaExceeded(res.status, body)) {
+              throw new YouTubeQuotaExceededError(apiKeyTail, body);
+            }
             if (res.status === 403 || res.status === 400) {
               if (ids.length > 0) break outer;
               throw new YouTubeApiError(res.status, body || res.statusText);
