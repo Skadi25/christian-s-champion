@@ -15,8 +15,7 @@ export async function getTrendingForUser(userId: string) {
       "id, opportunity_score, stance, ai_summary, ai_confidence, status, user_feedback, video:videos!inner(id, platform, external_id, url, title, channel_name, channel_id, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds, language), topic:topics(id, name)",
     )
     .eq("user_id", userId)
-    .gte("video.published_at", since)
-    .limit(500);
+    .limit(1000);
   if (error) throw new Error(error.message);
 
   const videoIds = (matches ?? []).map((m) => m.video?.id).filter(Boolean) as string[];
