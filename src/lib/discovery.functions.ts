@@ -108,18 +108,21 @@ export const getLatestVideos = createServerFn({ method: "POST" })
       .from("video_matches")
       .select(feedSelect)
       .eq("user_id", userId)
-      .gte("video.published_at", cutoff)
       .order("matched_at", { ascending: false })
-      .limit(200);
+      .limit(500);
     if (error) throw new Error(error.message);
-    // Client-seitig nach published_at sortieren (Supabase kann nested nicht ordnen).
-    const list = (rows ?? []).filter((r) => r.video?.published_at);
+    const cutoffMs = new Date(cutoff).getTime();
+    const list = (rows ?? []).filter((r) => {
+      const p = r.video?.published_at;
+      return p ? new Date(p).getTime() >= cutoffMs : false;
+    });
     list.sort(
       (a, b) =>
         new Date(b.video!.published_at!).getTime() - new Date(a.video!.published_at!).getTime(),
     );
-    return { items: list };
+    return { items: list.slice(0, 200) };
   });
+
 
 // ── Trends (Wachstum) ────────────────────────────────────────────────
 export const getTrendingVideos = createServerFn({ method: "GET" })
