@@ -189,6 +189,7 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
             items_returned: itemCount,
             ids_collected_so_far: ids.length,
             next_page_token: Boolean(json.nextPageToken),
+            api_key_tail: apiKeyTail,
           });
           if (!json.nextPageToken || ids.length >= target) break;
           pageToken = json.nextPageToken;
