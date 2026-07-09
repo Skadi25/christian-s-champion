@@ -796,3 +796,27 @@ function FeedbackButtons({
   );
 }
 
+function StanceBadge({ stance }: { stance: Stance | null }) {
+  if (!stance) return null;
+  const map: Record<Stance, { emoji: string; label: string; cls: string }> = {
+    promotes: { emoji: "🔴", label: "Verbreitet Mythos", cls: "bg-red-100 text-red-700 border-red-200" },
+    mentions: { emoji: "🟡", label: "Erwähnt neutral", cls: "bg-amber-100 text-amber-700 border-amber-200" },
+    debunks: { emoji: "🟢", label: "Widerlegt bereits", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+    unrelated: { emoji: "⚪", label: "Unabhängig", cls: "bg-slate-100 text-slate-600 border-slate-200" },
+  };
+  const s = map[stance];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        s.cls,
+      )}
+      title={s.label}
+    >
+      <span>{s.emoji}</span>
+      <span>{s.label}</span>
+    </span>
+  );
+}
+
+
