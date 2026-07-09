@@ -60,3 +60,17 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
       lastRun: lastRun ?? null,
     };
   });
+
+const FeedbackInput = z.object({
+  matchId: z.string().uuid(),
+  rating: z.enum(["relevant", "neutral", "not_relevant"]),
+});
+
+export const submitFeedback = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((raw: unknown) => FeedbackInput.parse(raw))
+  .handler(async ({ data, context }) => {
+    const { submitFeedbackForUser } = await import("./discovery/feedback.server");
+    return submitFeedbackForUser(context.userId, data.matchId, data.rating);
+  });
+
