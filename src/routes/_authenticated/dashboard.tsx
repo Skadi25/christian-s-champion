@@ -113,20 +113,25 @@ function Dashboard() {
 
   async function handleRun() {
     setRunning(true);
-    const t = toast.loading("Durchsuche YouTube (bis zu 150 Videos) und klassifiziere per KI …");
+    const t = toast.loading(
+      "Durchsuche YouTube (bis zu 5.000 Kandidaten) und klassifiziere die besten per KI …",
+    );
     try {
       const res = await runDiscoveryFn();
       toast.dismiss(t);
       if (res?.note === "no_claims") {
         toast.warning("Noch keine aktiven Claims. Lege welche im Themen-Editor an.");
       } else {
+        const s = res?.stanceStats;
+        const stanceLine = s
+          ? ` · 🔴 ${s.promotes} verbreitet · 🟡 ${s.mentions} erwähnt · 🟢 ${s.debunks} widerlegt`
+          : "";
         const parts = [
-          `✅ ${res?.matched ?? 0} relevante Videos`,
+          `✅ ${res?.matched ?? 0} priorisiert`,
           `❌ ${res?.rejected ?? 0} verworfen`,
-          `von ${res?.scanned ?? 0} geprüften`,
-          `(${res?.claimsUsed ?? 0} Claims)`,
+          `aus ${res?.scanned ?? 0} geprüften (Pool: ${res?.poolSize ?? 0})`,
         ];
-        toast.success(parts.join(" · "), { duration: 6000 });
+        toast.success(parts.join(" · ") + stanceLine, { duration: 8000 });
       }
       qc.invalidateQueries({ queryKey: ["discovery-feed"] });
     } catch (e) {
