@@ -58,6 +58,39 @@ export type Database = {
           },
         ]
       }
+      discovery_runs: {
+        Row: {
+          error: string | null
+          finished_at: string | null
+          id: string
+          started_at: string
+          status: string
+          user_id: string
+          videos_matched: number
+          videos_scanned: number
+        }
+        Insert: {
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+          user_id: string
+          videos_matched?: number
+          videos_scanned?: number
+        }
+        Update: {
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+          user_id?: string
+          videos_matched?: number
+          videos_scanned?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -135,10 +168,14 @@ export type Database = {
       }
       video_matches: {
         Row: {
+          ai_confidence: number | null
+          ai_reasoning: string | null
+          ai_summary: string | null
           claim_id: string | null
           created_at: string
           detected_claim: string | null
           id: string
+          matched_at: string
           opportunity_score: number | null
           score_breakdown: Json | null
           status: string
@@ -147,10 +184,14 @@ export type Database = {
           video_id: string
         }
         Insert: {
+          ai_confidence?: number | null
+          ai_reasoning?: string | null
+          ai_summary?: string | null
           claim_id?: string | null
           created_at?: string
           detected_claim?: string | null
           id?: string
+          matched_at?: string
           opportunity_score?: number | null
           score_breakdown?: Json | null
           status?: string
@@ -159,10 +200,14 @@ export type Database = {
           video_id: string
         }
         Update: {
+          ai_confidence?: number | null
+          ai_reasoning?: string | null
+          ai_summary?: string | null
           claim_id?: string | null
           created_at?: string
           detected_claim?: string | null
           id?: string
+          matched_at?: string
           opportunity_score?: number | null
           score_breakdown?: Json | null
           status?: string
@@ -208,8 +253,10 @@ export type Database = {
           like_count: number | null
           platform: string
           published_at: string | null
+          raw_metadata: Json | null
           thumbnail_url: string | null
           title: string | null
+          transcript: string | null
           url: string
           view_count: number | null
         }
@@ -226,8 +273,10 @@ export type Database = {
           like_count?: number | null
           platform: string
           published_at?: string | null
+          raw_metadata?: Json | null
           thumbnail_url?: string | null
           title?: string | null
+          transcript?: string | null
           url: string
           view_count?: number | null
         }
@@ -244,8 +293,10 @@ export type Database = {
           like_count?: number | null
           platform?: string
           published_at?: string | null
+          raw_metadata?: Json | null
           thumbnail_url?: string | null
           title?: string | null
+          transcript?: string | null
           url?: string
           view_count?: number | null
         }
