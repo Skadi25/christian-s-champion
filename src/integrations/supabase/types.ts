@@ -56,12 +56,58 @@ export type Database = {
         }
         Relationships: []
       }
+      claim_stance_preferences: {
+        Row: {
+          affinity: number
+          claim_id: string
+          id: string
+          negative_count: number
+          neutral_count: number
+          positive_count: number
+          stance: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          affinity?: number
+          claim_id: string
+          id?: string
+          negative_count?: number
+          neutral_count?: number
+          positive_count?: number
+          stance: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          affinity?: number
+          claim_id?: string
+          id?: string
+          negative_count?: number
+          neutral_count?: number
+          positive_count?: number
+          stance?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_stance_preferences_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claims: {
         Row: {
           correct_statement: string | null
           created_at: string
           id: string
           is_active: boolean
+          query_variants: Json | null
+          query_variants_generated_at: string | null
           text: string
           topic_id: string | null
           updated_at: string
@@ -73,6 +119,8 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          query_variants?: Json | null
+          query_variants_generated_at?: string | null
           text: string
           topic_id?: string | null
           updated_at?: string
@@ -84,6 +132,8 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          query_variants?: Json | null
+          query_variants_generated_at?: string | null
           text?: string
           topic_id?: string | null
           updated_at?: string
@@ -96,6 +146,50 @@ export type Database = {
             columns: ["topic_id"]
             isOneToOne: false
             referencedRelation: "topics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      discovery_run_stages: {
+        Row: {
+          created_at: string
+          id: string
+          input_count: number
+          meta: Json | null
+          output_count: number
+          run_id: string
+          stage_index: number
+          stage_name: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          input_count?: number
+          meta?: Json | null
+          output_count?: number
+          run_id: string
+          stage_index: number
+          stage_name: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          input_count?: number
+          meta?: Json | null
+          output_count?: number
+          run_id?: string
+          stage_index?: number
+          stage_name?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discovery_run_stages_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "discovery_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -326,6 +420,41 @@ export type Database = {
           },
         ]
       }
+      video_stats_snapshots: {
+        Row: {
+          captured_at: string
+          comment_count: number | null
+          id: string
+          like_count: number | null
+          video_id: string
+          view_count: number | null
+        }
+        Insert: {
+          captured_at?: string
+          comment_count?: number | null
+          id?: string
+          like_count?: number | null
+          video_id: string
+          view_count?: number | null
+        }
+        Update: {
+          captured_at?: string
+          comment_count?: number | null
+          id?: string
+          like_count?: number | null
+          video_id?: string
+          view_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_stats_snapshots_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       videos: {
         Row: {
           channel_id: string | null
@@ -386,6 +515,48 @@ export type Database = {
           transcript?: string | null
           url?: string
           view_count?: number | null
+        }
+        Relationships: []
+      }
+      watchlist_items: {
+        Row: {
+          created_at: string
+          external_id: string
+          id: string
+          kind: string
+          label: string | null
+          last_checked_at: string | null
+          platform: string
+          thumbnail_url: string | null
+          updated_at: string
+          url: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          external_id: string
+          id?: string
+          kind: string
+          label?: string | null
+          last_checked_at?: string | null
+          platform: string
+          thumbnail_url?: string | null
+          updated_at?: string
+          url?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          external_id?: string
+          id?: string
+          kind?: string
+          label?: string | null
+          last_checked_at?: string | null
+          platform?: string
+          thumbnail_url?: string | null
+          updated_at?: string
+          url?: string | null
+          user_id?: string
         }
         Relationships: []
       }

@@ -1,12 +1,15 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Tags, LogOut, User as UserIcon, Sparkles } from "lucide-react";
+import { LayoutDashboard, Tags, LogOut, User as UserIcon, Sparkles, Clock, TrendingUp, Heart } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/dashboard", label: "Discovery", icon: LayoutDashboard, emoji: "🔥" },
+  { to: "/latest", label: "Neueste Videos", icon: Clock, emoji: "🆕" },
+  { to: "/trends", label: "Trends", icon: TrendingUp, emoji: "📈" },
+  { to: "/watchlist", label: "Watchlist", icon: Heart, emoji: "❤️" },
   { to: "/topics", label: "Themen & Claims", icon: Tags, emoji: "🎯" },
 ] as const;
 

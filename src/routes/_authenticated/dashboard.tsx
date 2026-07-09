@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
-import { runDiscovery, getDiscoveryFeed, submitFeedback } from "@/lib/discovery.functions";
+import { runDiscovery, getDiscoveryFeed, submitFeedback, getLastRunTrace } from "@/lib/discovery.functions";
 import { cn } from "@/lib/utils";
 import type { Stance } from "@/lib/discovery/scoring";
 
@@ -268,16 +268,96 @@ function Dashboard() {
 
             <RejectedSection rejected={feedQ.data?.rejected ?? []} />
 
-            <div className="mt-10 rounded-2xl border border-dashed border-border bg-surface p-6 text-center">
-              <p className="text-xs text-muted-foreground">
-                Phase 3 kommt als nächstes: pro Video ein KI-Reaktionsentwurf mit Hook und
-                wissenschaftlichen Quellen.
-              </p>
-            </div>
+            <PipelineDebug />
           </>
         )}
       </div>
     </AppShell>
+  );
+}
+
+function PipelineDebug() {
+  const [open, setOpen] = useState(false);
+  const getTrace = useServerFn(getLastRunTrace);
+  const q = useQuery({
+    queryKey: ["last-run-trace"],
+    queryFn: () => getTrace(),
+    enabled: open,
+  });
+
+  return (
+    <section className="mt-10 rounded-2xl border border-border bg-white">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-5 py-3 text-left text-sm font-semibold"
+      >
+        <span>🔍 Pipeline-Details des letzten Runs</span>
+        <ChevronDown className={cn("h-4 w-4 transition", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="border-t border-border p-4 text-sm">
+          {q.isLoading ? (
+            <p className="text-muted-foreground">Lade Trace …</p>
+          ) : !q.data?.run ? (
+            <p className="text-muted-foreground">Noch kein Discovery-Lauf vorhanden.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="text-xs text-muted-foreground">
+                Run vom {q.data.run.started_at && new Date(q.data.run.started_at).toLocaleString("de-DE")} ·
+                Status: <b>{q.data.run.status}</b>
+                {q.data.run.error && <> · Fehler: {q.data.run.error}</>}
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-muted-foreground">
+                    <th className="py-1.5">#</th>
+                    <th>Stage</th>
+                    <th className="text-right">Input</th>
+                    <th className="text-right">Output</th>
+                    <th className="text-right">Verlust</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {q.data.stages.map((s) => (
+                    <tr key={s.stage_index} className="border-b border-border/60">
+                      <td className="py-1.5 text-muted-foreground">{s.stage_index}</td>
+                      <td className="font-medium">{s.stage_name}</td>
+                      <td className="text-right tabular-nums">{s.input_count}</td>
+                      <td className="text-right tabular-nums">{s.output_count}</td>
+                      <td className="text-right tabular-nums text-muted-foreground">
+                        {s.input_count > 0 ? s.input_count - s.output_count : 0}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {q.data.stages
+                .filter((s) => s.stage_name === "fetchCandidates")
+                .map((s) => {
+                  const meta = (s.meta ?? {}) as { query_hits?: Array<{ query: string; hits: number }> };
+                  const hits = meta.query_hits ?? [];
+                  return (
+                    <details key={s.stage_index} className="rounded-lg bg-surface p-3">
+                      <summary className="cursor-pointer text-xs font-semibold">
+                        Verwendete Suchanfragen ({hits.length})
+                      </summary>
+                      <ul className="mt-2 space-y-1 text-xs">
+                        {hits.map((h, i) => (
+                          <li key={i} className="flex justify-between gap-4">
+                            <span className="truncate">{h.query}</span>
+                            <span className="shrink-0 tabular-nums text-muted-foreground">{h.hits}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

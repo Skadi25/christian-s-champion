@@ -1,10 +1,10 @@
 /**
  * Platform-agnostic types for video discovery.
- * Every adapter (YouTube, TikTok, Instagram) implements this shape,
- * so the rest of the app never depends on a specific provider.
+ * Every adapter (YouTube, TikTok, Instagram, ...) implements this shape.
+ * The rest of the app never depends on a specific provider.
  */
 
-export type PlatformId = "youtube" | "tiktok" | "instagram";
+export type PlatformId = "youtube" | "tiktok" | "instagram" | "facebook" | "x" | "threads";
 
 export type PlatformVideo = {
   platform: PlatformId;
@@ -30,9 +30,33 @@ export type SearchQuery = {
   region?: string;
   publishedAfter?: string;
   maxResults?: number;
+  order?: "relevance" | "date" | "viewCount";
+};
+
+export type LatestQuery = {
+  language?: string;
+  region?: string;
+  publishedAfter?: string;
+  maxResults?: number;
+  categoryHints?: string[];
+};
+
+export type ChannelInfo = {
+  platform: PlatformId;
+  channel_id: string;
+  channel_name: string | null;
+  thumbnail_url: string | null;
+  subscriber_count: number | null;
 };
 
 export interface PlatformAdapter {
   readonly id: PlatformId;
+  /** Wide keyword search across the platform. */
   search(query: SearchQuery): Promise<PlatformVideo[]>;
+  /** Refresh view/like/comment counts for known videos (Trend delta). */
+  fetchVideoStats?(externalIds: string[]): Promise<PlatformVideo[]>;
+  /** Recent uploads from a specific channel (Watchlist refresh). */
+  fetchChannelVideos?(channelId: string, opts?: { maxResults?: number; publishedAfter?: string }): Promise<PlatformVideo[]>;
+  /** Resolve a channel URL/handle into stable channel metadata. */
+  resolveChannel?(identifier: string): Promise<ChannelInfo | null>;
 }
