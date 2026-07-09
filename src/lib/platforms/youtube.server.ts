@@ -57,7 +57,15 @@ function mapVideoItem(v: YTVideoItem): PlatformVideo {
   };
 }
 
-async function fetchDetailsInBatches(apiKey: string, ids: string[]): Promise<PlatformVideo[]> {
+function redactKey(url: string): string {
+  return url.replace(/([?&]key=)[^&]+/g, "$1REDACTED");
+}
+
+async function fetchDetailsInBatches(
+  apiKey: string,
+  ids: string[],
+  debug?: import("./types").SearchDiagnostic[],
+): Promise<PlatformVideo[]> {
   const out: PlatformVideo[] = [];
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
@@ -66,12 +74,24 @@ async function fetchDetailsInBatches(apiKey: string, ids: string[]): Promise<Pla
       id: chunk.join(","),
       part: "snippet,statistics,contentDetails",
     });
-    const r = await fetch(`${VIDEOS_URL}?${p}`);
+    const url = `${VIDEOS_URL}?${p}`;
+    const r = await fetch(url);
     if (!r.ok) {
       const body = await r.text().catch(() => "");
+      debug?.push({
+        url: redactKey(url),
+        status: r.status,
+        details_fetched: 0,
+        error: (body || r.statusText).slice(0, 300),
+      });
       throw new YouTubeApiError(r.status, body || r.statusText);
     }
     const j = (await r.json()) as { items?: YTVideoItem[] };
+    debug?.push({
+      url: redactKey(url),
+      status: r.status,
+      details_fetched: j.items?.length ?? 0,
+    });
     for (const v of j.items ?? []) out.push(mapVideoItem(v));
   }
   return out;
