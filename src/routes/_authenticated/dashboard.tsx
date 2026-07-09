@@ -122,6 +122,12 @@ function Dashboard() {
       toast.dismiss(t);
       if (res?.note === "no_claims") {
         toast.warning("Noch keine aktiven Claims. Lege welche im Themen-Editor an.");
+      } else if (res?.note === "quota_exceeded") {
+        const tail = (res as { apiKeyTail?: string | null }).apiKeyTail;
+        toast.error(
+          `YouTube API-Limit erreicht${tail ? ` (Key …${tail})` : ""}. Bitte später erneut versuchen.`,
+          { duration: 10000 },
+        );
       } else {
         const s = res?.stanceStats;
         const stanceLine = s

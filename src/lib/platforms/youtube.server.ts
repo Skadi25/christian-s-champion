@@ -12,6 +12,19 @@ export class YouTubeApiError extends Error {
   }
 }
 
+/** Thrown when the YouTube Data API v3 daily quota is exhausted. */
+export class YouTubeQuotaExceededError extends Error {
+  constructor(public apiKeyTail: string, public body: string) {
+    super("YouTube API-Limit erreicht (quotaExceeded).");
+    this.name = "YouTubeQuotaExceededError";
+  }
+}
+
+function isQuotaExceeded(status: number, body: string): boolean {
+  if (status !== 403 && status !== 429) return false;
+  return /quotaExceeded|dailyLimitExceeded|rateLimitExceeded|userRateLimitExceeded/i.test(body);
+}
+
 function parseIsoDurationToSeconds(iso: string | undefined): number | null {
   if (!iso) return null;
   const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso);
@@ -134,6 +147,7 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
 
           const url = `${SEARCH_URL}?${params}`;
           const res = await fetch(url);
+          const apiKeyTail = apiKey.slice(-4);
           if (!res.ok) {
             const body = await res.text().catch(() => "");
             debug?.push({
@@ -143,8 +157,12 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
               page,
               items_returned: 0,
               ids_collected_so_far: ids.length,
+              api_key_tail: apiKeyTail,
               error: (body || res.statusText).slice(0, 300),
             });
+            if (isQuotaExceeded(res.status, body)) {
+              throw new YouTubeQuotaExceededError(apiKeyTail, body);
+            }
             if (res.status === 403 || res.status === 400) {
               if (ids.length > 0) break outer;
               throw new YouTubeApiError(res.status, body || res.statusText);
@@ -171,6 +189,7 @@ export function createYouTubeAdapter(apiKey: string): PlatformAdapter {
             items_returned: itemCount,
             ids_collected_so_far: ids.length,
             next_page_token: Boolean(json.nextPageToken),
+            api_key_tail: apiKeyTail,
           });
           if (!json.nextPageToken || ids.length >= target) break;
           pageToken = json.nextPageToken;

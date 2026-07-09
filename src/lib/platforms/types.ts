@@ -33,6 +33,9 @@ export type SearchDiagnostic = {
   ids_collected_so_far?: number;
   next_page_token?: boolean;
   details_fetched?: number;
+  api_key_tail?: string;
+  quota_used?: number | string;
+  quota_remaining?: number | string;
   error?: string;
 };
 
