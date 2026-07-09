@@ -12,6 +12,19 @@ export class YouTubeApiError extends Error {
   }
 }
 
+/** Thrown when the YouTube Data API v3 daily quota is exhausted. */
+export class YouTubeQuotaExceededError extends Error {
+  constructor(public apiKeyTail: string, public body: string) {
+    super("YouTube API-Limit erreicht (quotaExceeded).");
+    this.name = "YouTubeQuotaExceededError";
+  }
+}
+
+function isQuotaExceeded(status: number, body: string): boolean {
+  if (status !== 403 && status !== 429) return false;
+  return /quotaExceeded|dailyLimitExceeded|rateLimitExceeded|userRateLimitExceeded/i.test(body);
+}
+
 function parseIsoDurationToSeconds(iso: string | undefined): number | null {
   if (!iso) return null;
   const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso);
