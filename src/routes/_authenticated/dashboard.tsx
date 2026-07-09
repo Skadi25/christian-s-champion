@@ -11,9 +11,6 @@ import {
   Eye,
   Heart,
   Flame,
-  TrendingUp,
-  Clock,
-  Inbox,
   ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -140,14 +137,17 @@ function Dashboard() {
     <AppShell>
       <div className="mx-auto max-w-7xl px-6 py-12 md:px-12">
         {/* Header */}
-        <div className="flex flex-wrap items-end justify-between gap-6">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4 sm:flex sm:flex-wrap sm:justify-between sm:gap-6">
           <div className="min-w-0">
-            <h1 className="font-display text-4xl font-bold tracking-tight md:text-5xl">
+            <p className="text-xs font-semibold uppercase tracking-wider text-signal">
+              ✨ Dein Discovery-Feed
+            </p>
+            <h1 className="font-display mt-2 text-3xl font-bold tracking-tight sm:text-4xl md:text-5xl">
               {greeting}
-              {displayName ? `, ${displayName}` : ""}
+              {displayName ? `, ${displayName}` : ""} 👋
             </h1>
-            <p className="mt-3 text-base text-muted-foreground">
-              Deine besten Chancen — heute priorisiert.
+            <p className="mt-3 text-sm text-muted-foreground sm:text-base">
+              🚀 Deine besten Chancen — heute frisch für dich priorisiert.
             </p>
           </div>
           {!empty && (
@@ -155,18 +155,18 @@ function Dashboard() {
               <button
                 onClick={handleRun}
                 disabled={running}
-                className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm font-semibold text-background shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-signal to-purple-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:shadow-lg disabled:opacity-50"
               >
                 {running ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                {running ? "Aktualisiere …" : "Aktualisieren"}
+                {running ? "Suche läuft …" : "⚡ Aktualisieren"}
               </button>
               {lastRun?.finished_at && (
                 <p className="text-xs text-muted-foreground">
-                  Zuletzt {formatRelativeTime(lastRun.finished_at)}
+                  🕒 Zuletzt {formatRelativeTime(lastRun.finished_at)}
                 </p>
               )}
             </div>
@@ -178,29 +178,32 @@ function Dashboard() {
         ) : (
           <>
             {/* KPI cards */}
-            <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="mt-10 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
               <KpiCard
-                icon={<Clock className="h-4 w-4" />}
+                emoji="🆕"
                 label="Neue Videos heute"
                 value={stats.newToday}
-                accent="signal"
+                gradient="from-blue-50 to-cyan-50"
               />
               <KpiCard
-                icon={<Flame className="h-4 w-4" />}
+                emoji="🔥"
                 label="Hohe Chancen"
                 value={stats.highOpp}
                 hint="Score ≥ 75"
+                gradient="from-orange-50 to-red-50"
               />
               <KpiCard
-                icon={<TrendingUp className="h-4 w-4" />}
+                emoji="📈"
                 label="Trend Score"
                 value={stats.avg ?? "—"}
                 hint="Ø aller Videos"
+                gradient="from-emerald-50 to-green-50"
               />
               <KpiCard
-                icon={<Inbox className="h-4 w-4" />}
+                emoji="🎯"
                 label="Zu prüfen"
                 value={stats.total}
+                gradient="from-purple-50 to-pink-50"
               />
             </div>
 
@@ -222,7 +225,7 @@ function Dashboard() {
                   <SectionHeader
                     emoji="🔥"
                     title="Beste Chancen heute"
-                    subtitle={`Die ${topFive.length} wichtigsten Videos für dich.`}
+                    subtitle={`Die ${topFive.length} heißesten Videos für dich. 🚀`}
                   />
                   <div className="mt-6 grid gap-5 md:grid-cols-2">
                     {topFive.map((m, i) => (
@@ -235,8 +238,9 @@ function Dashboard() {
                 {rest.length > 0 && (
                   <section className="mt-16">
                     <SectionHeader
+                      emoji="✨"
                       title="Neue Chancen"
-                      subtitle={`${rest.length} weitere Videos für dich sortiert.`}
+                      subtitle={`${rest.length} weitere spannende Videos für dich sortiert. 🎬`}
                     />
                     <div className="mt-6 grid gap-3">
                       {rest.map((m) => (
@@ -277,33 +281,31 @@ function SectionHeader({
 }
 
 function KpiCard({
-  icon,
+  emoji,
   label,
   value,
   hint,
-  accent,
+  gradient,
 }: {
-  icon: React.ReactNode;
+  emoji: string;
   label: string;
   value: number | string;
   hint?: string;
-  accent?: "signal";
+  gradient?: string;
 }) {
   return (
-    <div className="rounded-3xl border border-border bg-white p-6 shadow-sm">
-      <div
-        className={cn(
-          "inline-flex h-8 w-8 items-center justify-center rounded-full",
-          accent === "signal"
-            ? "bg-signal/10 text-signal"
-            : "bg-muted text-muted-foreground",
-        )}
-      >
-        {icon}
-      </div>
-      <p className="mt-6 text-4xl font-bold tracking-tight tabular-nums">{value}</p>
-      <p className="mt-1.5 text-sm font-medium text-muted-foreground">{label}</p>
-      {hint && <p className="mt-0.5 text-xs text-muted-foreground/70">{hint}</p>}
+    <div
+      className={cn(
+        "rounded-3xl border border-border bg-gradient-to-br p-4 shadow-sm sm:p-6",
+        gradient ?? "from-white to-white",
+      )}
+    >
+      <div className="text-3xl sm:text-4xl">{emoji}</div>
+      <p className="mt-3 text-3xl font-bold tracking-tight tabular-nums sm:mt-5 sm:text-4xl">
+        {value}
+      </p>
+      <p className="mt-1 text-xs font-medium text-muted-foreground sm:text-sm">{label}</p>
+      {hint && <p className="mt-0.5 text-[10px] text-muted-foreground/70 sm:text-xs">{hint}</p>}
     </div>
   );
 }
