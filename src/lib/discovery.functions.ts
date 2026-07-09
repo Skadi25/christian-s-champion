@@ -20,16 +20,29 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
 
-    const { data: matches, error } = await supabase
-      .from("video_matches")
-      .select(
-        "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, matched_at, status, video:videos(id, platform, external_id, url, title, channel_name, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds), topic:topics(id, name), claim:claims(id, text)",
-      )
-      .eq("user_id", userId)
-      .order("opportunity_score", { ascending: false, nullsFirst: false })
-      .limit(50);
+    const selectFields =
+      "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, matched_at, status, video:videos(id, platform, external_id, url, title, channel_name, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds), topic:topics(id, name), claim:claims(id, text)";
 
-    if (error) throw new Error(error.message);
+    const [{ data: matches, error: mErr }, { data: rejected, error: rErr }] =
+      await Promise.all([
+        supabase
+          .from("video_matches")
+          .select(selectFields)
+          .eq("user_id", userId)
+          .eq("status", "new")
+          .order("opportunity_score", { ascending: false, nullsFirst: false })
+          .limit(50),
+        supabase
+          .from("video_matches")
+          .select(selectFields)
+          .eq("user_id", userId)
+          .eq("status", "rejected")
+          .order("ai_confidence", { ascending: false, nullsFirst: false })
+          .limit(100),
+      ]);
+
+    if (mErr) throw new Error(mErr.message);
+    if (rErr) throw new Error(rErr.message);
 
     const { data: lastRun } = await supabase
       .from("discovery_runs")
@@ -39,5 +52,9 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
       .limit(1)
       .maybeSingle();
 
-    return { matches: matches ?? [], lastRun: lastRun ?? null };
+    return {
+      matches: matches ?? [],
+      rejected: rejected ?? [],
+      lastRun: lastRun ?? null,
+    };
   });
