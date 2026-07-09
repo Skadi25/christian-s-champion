@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
-import { runDiscovery, getDiscoveryFeed } from "@/lib/discovery.functions";
+import { runDiscovery, getDiscoveryFeed, submitFeedback } from "@/lib/discovery.functions";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -398,13 +398,10 @@ function VideoMatchCard({
             >
               <ExternalLink className="h-3.5 w-3.5" /> Auf {v?.platform === "youtube" ? "YouTube" : "der Plattform"} öffnen
             </a>
-            <button
-              disabled
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-muted-foreground"
-              title="Kommt in Phase 3"
-            >
-              ✍️ Reaktion vorbereiten
-            </button>
+            <FeedbackButtons
+              matchId={match.id}
+              current={(match.user_feedback as FeedbackRating | null) ?? null}
+            />
             <button
               onClick={onToggle}
               className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
@@ -692,7 +689,87 @@ function RejectedCard({ match }: { match: Match }) {
             💭 {match.ai_reasoning}
           </p>
         )}
+        <div className="mt-2">
+          <FeedbackButtons
+            matchId={match.id}
+            current={(match.user_feedback as FeedbackRating | null) ?? null}
+            size="sm"
+          />
+        </div>
       </div>
+    </div>
+  );
+}
+
+type FeedbackRating = "relevant" | "neutral" | "not_relevant";
+
+function FeedbackButtons({
+  matchId,
+  current,
+  size = "md",
+}: {
+  matchId: string;
+  current: FeedbackRating | null;
+  size?: "sm" | "md";
+}) {
+  const qc = useQueryClient();
+  const submit = useServerFn(submitFeedback);
+  const [busy, setBusy] = useState<FeedbackRating | null>(null);
+  const [optimistic, setOptimistic] = useState<FeedbackRating | null>(current);
+
+  useEffect(() => setOptimistic(current), [current]);
+
+  async function rate(rating: FeedbackRating) {
+    setBusy(rating);
+    setOptimistic(rating);
+    try {
+      await submit({ data: { matchId, rating } });
+      toast.success(
+        rating === "relevant"
+          ? "Danke — die KI lernt daraus."
+          : rating === "not_relevant"
+          ? "Verstanden. Weniger davon."
+          : "Notiert.",
+        { duration: 2000 },
+      );
+      qc.invalidateQueries({ queryKey: ["discovery-feed"] });
+    } catch (e) {
+      setOptimistic(current);
+      toast.error(e instanceof Error ? e.message : "Konnte Feedback nicht speichern.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const items: Array<{ r: FeedbackRating; emoji: string; label: string; on: string }> = [
+    { r: "relevant", emoji: "👍", label: "Relevant", on: "bg-emerald-100 text-emerald-700 border-emerald-300" },
+    { r: "neutral", emoji: "😐", label: "Neutral", on: "bg-slate-200 text-slate-700 border-slate-300" },
+    { r: "not_relevant", emoji: "👎", label: "Nicht", on: "bg-rose-100 text-rose-700 border-rose-300" },
+  ];
+
+  const pad = size === "sm" ? "px-2 py-1 text-[11px]" : "px-2.5 py-1.5 text-xs";
+
+  return (
+    <div className="inline-flex gap-1" role="group" aria-label="Feedback">
+      {items.map((it) => {
+        const active = optimistic === it.r;
+        return (
+          <button
+            key={it.r}
+            onClick={() => rate(it.r)}
+            disabled={busy !== null}
+            title={it.label}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-lg border font-medium transition disabled:opacity-60",
+              pad,
+              active ? it.on : "border-border bg-white text-muted-foreground hover:bg-accent",
+            )}
+          >
+            <span>{it.emoji}</span>
+            {size === "md" && <span>{it.label}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }

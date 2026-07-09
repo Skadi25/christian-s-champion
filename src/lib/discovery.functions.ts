@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { z } from "zod";
+
 
 /**
  * Discovery pipeline — orchestrated server-side.
@@ -21,7 +23,7 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
     const { supabase, userId } = context;
 
     const selectFields =
-      "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, matched_at, status, video:videos(id, platform, external_id, url, title, channel_name, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds), topic:topics(id, name), claim:claims(id, text)";
+      "id, opportunity_score, score_breakdown, detected_claim, ai_summary, ai_reasoning, ai_confidence, matched_at, status, user_feedback, video:videos(id, platform, external_id, url, title, channel_name, thumbnail_url, view_count, like_count, comment_count, published_at, duration_seconds, language), topic:topics(id, name), claim:claims(id, text)";
 
     const [{ data: matches, error: mErr }, { data: rejected, error: rErr }] =
       await Promise.all([
@@ -58,3 +60,17 @@ export const getDiscoveryFeed = createServerFn({ method: "GET" })
       lastRun: lastRun ?? null,
     };
   });
+
+const FeedbackInput = z.object({
+  matchId: z.string().uuid(),
+  rating: z.enum(["relevant", "neutral", "not_relevant"]),
+});
+
+export const submitFeedback = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((raw: unknown) => FeedbackInput.parse(raw))
+  .handler(async ({ data, context }) => {
+    const { submitFeedbackForUser } = await import("./discovery/feedback.server");
+    return submitFeedbackForUser(context.userId, data.matchId, data.rating);
+  });
+
