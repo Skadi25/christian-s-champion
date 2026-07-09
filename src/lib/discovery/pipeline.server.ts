@@ -123,6 +123,8 @@ export async function runDiscoveryForUser(userId: string) {
     }> = [];
     const collected: Candidate[] = [];
 
+    let quotaExceeded = false;
+    let quotaApiKeyTail: string | null = null;
     outer: for (const claim of claims) {
       const variants = queriesByClaim.get(claim.id) ?? [claim.text];
       for (const query of variants) {
@@ -143,8 +145,15 @@ export async function runDiscoveryForUser(userId: string) {
             if (collected.length >= MAX_CANDIDATE_POOL) break;
           }
         } catch (e) {
+          const { YouTubeQuotaExceededError } = await import("@/lib/platforms/youtube.server");
           const msg = e instanceof Error ? e.message : String(e);
           queryHits.push({ claim_id: claim.id, query, hits: 0, requests: debug, error: msg });
+          if (e instanceof YouTubeQuotaExceededError) {
+            quotaExceeded = true;
+            quotaApiKeyTail = e.apiKeyTail;
+            console.warn(`[discovery] YouTube quota exceeded (key …${e.apiKeyTail})`);
+            break outer;
+          }
           console.warn(`[discovery] search failed "${query}":`, msg);
         }
       }
@@ -152,8 +161,42 @@ export async function runDiscoveryForUser(userId: string) {
     trace.record("fetchCandidates", totalQueries, collected.length, {
       pool_cap: MAX_CANDIDATE_POOL,
       published_after: publishedAfter,
+      quota_exceeded: quotaExceeded,
+      api_key_tail: quotaApiKeyTail,
       query_hits: queryHits,
     });
+
+    // Bei erschöpftem Quota sauber abbrechen — keine 0-Treffer-Illusion.
+    if (quotaExceeded && collected.length === 0) {
+      if (trace.stages.length > 0) {
+        await supabaseAdmin.from("discovery_run_stages").insert(
+          trace.stages.map((s, i) => ({
+            run_id: runId,
+            user_id: userId,
+            stage_index: i,
+            stage_name: s.stage,
+            input_count: s.input,
+            output_count: s.output,
+            meta: (s.meta ?? null) as never,
+          })) as never,
+        );
+      }
+      await supabaseAdmin
+        .from("discovery_runs")
+        .update({
+          status: "quota_exceeded",
+          finished_at: new Date().toISOString(),
+          error: `YouTube API-Limit erreicht (Key …${quotaApiKeyTail ?? "?"}). Bitte später erneut versuchen.`,
+        })
+        .eq("id", runId);
+      return {
+        runId,
+        scanned: 0,
+        matched: 0,
+        note: "quota_exceeded" as const,
+        apiKeyTail: quotaApiKeyTail,
+      };
+    }
 
     // ─── 3. Dedupe → Zeitraum → Sprache ──────────────────────────────
     let candidates = dedupeCandidates(collected, trace);
