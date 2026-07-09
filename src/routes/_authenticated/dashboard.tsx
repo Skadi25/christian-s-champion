@@ -614,3 +614,86 @@ function formatRelativeTime(iso: string): string {
   if (days < 30) return `vor ${days} Tag${days === 1 ? "" : "en"}`;
   return new Date(iso).toLocaleDateString("de-DE");
 }
+
+function RejectedSection({ rejected }: { rejected: Match[] }) {
+  const [open, setOpen] = useState(false);
+  if (rejected.length === 0) return null;
+
+  return (
+    <section className="mt-10">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between rounded-2xl border border-border bg-white px-5 py-4 text-left shadow-sm transition hover:bg-accent/50"
+      >
+        <div>
+          <h2 className="font-display text-lg font-semibold tracking-tight">
+            🔍 Auch geprüft, aber verworfen
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {rejected.length} Videos hat die KI angeschaut, aber nicht als Match eingestuft.
+            Sortiert nach Confidence — die obersten Kandidaten waren am nächsten dran.
+          </p>
+        </div>
+        <ChevronDown className={cn("h-5 w-5 shrink-0 transition", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="mt-3 grid gap-2">
+          {rejected.map((r) => (
+            <RejectedCard key={r.id} match={r} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RejectedCard({ match }: { match: Match }) {
+  const v = match.video;
+  const conf = Math.round(((match.ai_confidence as number | null) ?? 0) * 100);
+  return (
+    <div className="flex gap-3 rounded-xl border border-border/60 bg-white p-3">
+      {v?.thumbnail_url ? (
+        <a
+          href={v.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="block h-16 w-28 shrink-0 overflow-hidden rounded-lg"
+        >
+          <img src={v.thumbnail_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+        </a>
+      ) : (
+        <div className="h-16 w-28 shrink-0 rounded-lg bg-muted" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <a
+            href={v?.url ?? "#"}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="line-clamp-1 text-sm font-medium hover:text-signal"
+          >
+            {v?.title || "Ohne Titel"}
+          </a>
+          <span
+            className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600"
+            title="KI-Confidence, dass das Video die Falschaussage vertritt"
+          >
+            {conf}%
+          </span>
+        </div>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">
+          {v?.channel_name ?? "—"}
+          {match.topic?.name && <> · 🎯 {match.topic.name}</>}
+          {match.claim?.text && <> · „{match.claim.text}"</>}
+        </p>
+        {match.ai_reasoning && (
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+            💭 {match.ai_reasoning}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
