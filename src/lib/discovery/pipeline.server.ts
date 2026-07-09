@@ -13,7 +13,7 @@ import {
 import type { PlatformVideo } from "@/lib/platforms/types";
 
 const MAX_CLAIMS_PER_RUN = 30;
-const MAX_VIDEOS_PER_QUERY = 150;
+const MAX_VIDEOS_PER_QUERY = 50;
 const MAX_CANDIDATE_POOL = 10_000;
 const MAX_CLASSIFICATIONS = 250;
 const LOOKBACK_DAYS = 365; // 12 Monate
