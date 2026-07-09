@@ -58,20 +58,21 @@ export async function submitFeedbackForUser(userId: string, matchId: string, rat
     else neu += 1;
     const total = pos + neg + neu;
     const affinity = total > 0 ? (pos - neg) / total : 0;
+    const payload = {
+      user_id: userId,
+      positive_count: pos,
+      negative_count: neg,
+      neutral_count: neu,
+      affinity,
+      ...match,
+      ...extra,
+    };
     await supabaseAdmin
       .from(table)
-      .upsert(
-        {
-          user_id: userId,
-          positive_count: pos,
-          negative_count: neg,
-          neutral_count: neu,
-          affinity,
-          ...match,
-          ...extra,
-        },
-        { onConflict: table === "channel_preferences" ? "user_id,platform,channel_id" : "user_id,stance" },
-      );
+      .upsert(payload as never, {
+        onConflict:
+          table === "channel_preferences" ? "user_id,platform,channel_id" : "user_id,stance",
+      });
     return affinity;
   }
 
