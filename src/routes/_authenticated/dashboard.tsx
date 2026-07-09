@@ -283,33 +283,31 @@ function SectionHeader({
 }
 
 function KpiCard({
-  icon,
+  emoji,
   label,
   value,
   hint,
-  accent,
+  gradient,
 }: {
-  icon: React.ReactNode;
+  emoji: string;
   label: string;
   value: number | string;
   hint?: string;
-  accent?: "signal";
+  gradient?: string;
 }) {
   return (
-    <div className="rounded-3xl border border-border bg-white p-6 shadow-sm">
-      <div
-        className={cn(
-          "inline-flex h-8 w-8 items-center justify-center rounded-full",
-          accent === "signal"
-            ? "bg-signal/10 text-signal"
-            : "bg-muted text-muted-foreground",
-        )}
-      >
-        {icon}
-      </div>
-      <p className="mt-6 text-4xl font-bold tracking-tight tabular-nums">{value}</p>
-      <p className="mt-1.5 text-sm font-medium text-muted-foreground">{label}</p>
-      {hint && <p className="mt-0.5 text-xs text-muted-foreground/70">{hint}</p>}
+    <div
+      className={cn(
+        "rounded-3xl border border-border bg-gradient-to-br p-4 shadow-sm sm:p-6",
+        gradient ?? "from-white to-white",
+      )}
+    >
+      <div className="text-3xl sm:text-4xl">{emoji}</div>
+      <p className="mt-3 text-3xl font-bold tracking-tight tabular-nums sm:mt-5 sm:text-4xl">
+        {value}
+      </p>
+      <p className="mt-1 text-xs font-medium text-muted-foreground sm:text-sm">{label}</p>
+      {hint && <p className="mt-0.5 text-[10px] text-muted-foreground/70 sm:text-xs">{hint}</p>}
     </div>
   );
 }
