@@ -225,7 +225,7 @@ function Dashboard() {
                   <SectionHeader
                     emoji="🔥"
                     title="Beste Chancen heute"
-                    subtitle={`Die ${topFive.length} wichtigsten Videos für dich.`}
+                    subtitle={`Die ${topFive.length} heißesten Videos für dich. 🚀`}
                   />
                   <div className="mt-6 grid gap-5 md:grid-cols-2">
                     {topFive.map((m, i) => (
@@ -238,8 +238,9 @@ function Dashboard() {
                 {rest.length > 0 && (
                   <section className="mt-16">
                     <SectionHeader
+                      emoji="✨"
                       title="Neue Chancen"
-                      subtitle={`${rest.length} weitere Videos für dich sortiert.`}
+                      subtitle={`${rest.length} weitere spannende Videos für dich sortiert. 🎬`}
                     />
                     <div className="mt-6 grid gap-3">
                       {rest.map((m) => (
