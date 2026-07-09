@@ -428,11 +428,15 @@ function VideoMatchCard({
           {/* Expanded breakdown */}
           {expanded && bd && (
             <div className="mt-3 grid gap-2 rounded-lg bg-surface p-3 text-xs">
-              <ScoreBar label="🌍 Reichweite" value={bd.reach ?? 0} weight={35} />
-              <ScoreBar label="📈 Wachstum" value={bd.growth ?? 0} weight={25} />
-              <ScoreBar label="⏱ Aktualität" value={bd.recency ?? 0} weight={15} />
-              <ScoreBar label="💬 Engagement" value={bd.engagement ?? 0} weight={15} />
-              <ScoreBar label="🤖 KI-Confidence" value={bd.confidence ?? 0} weight={10} />
+              <ScoreBar label="🎯 Stance" value={bd.stance ?? 0} weight={45} />
+              <ScoreBar label="🌍 Reichweite" value={bd.reach ?? 0} weight={15} />
+              <ScoreBar label="📈 Wachstum" value={bd.growth ?? 0} weight={8} />
+              <ScoreBar label="⏱ Aktualität" value={bd.recency ?? 0} weight={7} />
+              <ScoreBar label="💬 Engagement" value={bd.engagement ?? 0} weight={5} />
+              <ScoreBar label="🇩🇪 Sprache" value={bd.language ?? 0} weight={5} />
+              <ScoreBar label="📺 Kanal-Fit" value={bd.channel ?? 0} weight={5} />
+              <ScoreBar label="🧠 Stance-Fit" value={bd.stanceAffinity ?? 0} weight={5} />
+              <ScoreBar label="🤖 KI-Confidence" value={bd.confidence ?? 0} weight={5} />
               {match.ai_reasoning && (
                 <p className="mt-2 rounded bg-white p-2 text-muted-foreground">
                   💡 {match.ai_reasoning}
