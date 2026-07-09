@@ -11,9 +11,11 @@ type Claim = {
   topic_name: string | null;
 };
 
-const MAX_CLAIMS_PER_RUN = 10;
-const MAX_VIDEOS_PER_CLAIM = 6;
-const MAX_CLASSIFICATIONS = 40;
+const MAX_CLAIMS_PER_RUN = 25;
+const MAX_VIDEOS_PER_CLAIM = 50; // YouTube API max per call
+const MAX_CLASSIFICATIONS = 150;
+const LOOKBACK_DAYS = 30;
+const MIN_MATCH_CONFIDENCE = 0.5;
 
 export async function runDiscoveryForUser(userId: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -62,7 +64,7 @@ export async function runDiscoveryForUser(userId: string) {
 
     // 3. Fetch videos per claim (YouTube for now — architecture is platform-agnostic)
     const adapter = getPlatformAdapter("youtube");
-    const publishedAfter = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+    const publishedAfter = new Date(Date.now() - LOOKBACK_DAYS * 24 * 3_600_000).toISOString();
 
     type CandidateVideo = { video: PlatformVideo; claim: Claim };
     const candidates: CandidateVideo[] = [];
@@ -130,8 +132,12 @@ export async function runDiscoveryForUser(userId: string) {
     }
 
     // 5. Classify each candidate with AI (parallel with concurrency cap)
-    const CONCURRENCY = 6;
+    // We ALWAYS store the classification (matches + rejects) so the user can
+    // see which videos were checked and why they were dismissed.
+    const CONCURRENCY = 8;
     let matched = 0;
+    let rejected = 0;
+    let aiErrors = 0;
     const queue = [...candidates];
 
     async function classifyAndStore(cand: CandidateVideo) {
@@ -147,7 +153,7 @@ export async function runDiscoveryForUser(userId: string) {
       try {
         ai = await chatJson<typeof ai>({
           system:
-            "Du bist ein Faktenchecker. Prüfe, ob das folgende Video die genannte Falschaussage aufstellt oder bewirbt. Antworte STRICT als JSON mit den Feldern matches (boolean), confidence (0-1), summary (kurzer deutscher Satz, was das Video sagt), reasoning (1-2 Sätze deutsch, warum es (nicht) matched).",
+            "Du bist ein Faktenchecker. Prüfe, ob das folgende Video die genannte Falschaussage aufstellt, verteidigt oder bewirbt (nicht: widerlegt). Antworte STRICT als JSON mit den Feldern matches (boolean, true nur wenn das Video die Falschaussage AKTIV vertritt), confidence (0-1), summary (kurzer deutscher Satz, was das Video sagt), reasoning (1-2 Sätze deutsch, warum es (nicht) matched).",
           user: JSON.stringify({
             falschaussage: cand.claim.text,
             warum_problematisch: cand.claim.why_problematic ?? undefined,
@@ -160,18 +166,25 @@ export async function runDiscoveryForUser(userId: string) {
       } catch (e) {
         if (e instanceof AIGatewayError && e.status === 402) throw e; // bubble up: stop run
         console.warn("[discovery] AI-Klassifizierung fehlgeschlagen:", e);
+        aiErrors++;
         return;
       }
 
-      if (!ai.matches || ai.confidence < 0.5) return;
+      const isMatch = ai.matches && ai.confidence >= MIN_MATCH_CONFIDENCE;
 
-      const { score, breakdown } = computeOpportunityScore({
-        view_count: cand.video.view_count,
-        like_count: cand.video.like_count,
-        comment_count: cand.video.comment_count,
-        published_at: cand.video.published_at,
-        ai_confidence: ai.confidence,
-      });
+      let score: number | null = null;
+      let breakdown: unknown = null;
+      if (isMatch) {
+        const r = computeOpportunityScore({
+          view_count: cand.video.view_count,
+          like_count: cand.video.like_count,
+          comment_count: cand.video.comment_count,
+          published_at: cand.video.published_at,
+          ai_confidence: ai.confidence,
+        });
+        score = r.score;
+        breakdown = r.breakdown;
+      }
 
       const { error: mErr } = await supabaseAdmin.from("video_matches").upsert(
         {
@@ -181,20 +194,21 @@ export async function runDiscoveryForUser(userId: string) {
           claim_id: cand.claim.id,
           detected_claim: cand.claim.text,
           opportunity_score: score,
-          score_breakdown: breakdown,
+          score_breakdown: breakdown as never,
           ai_confidence: ai.confidence,
           ai_summary: ai.summary,
           ai_reasoning: ai.reasoning,
           matched_at: new Date().toISOString(),
-          status: "new",
+          status: isMatch ? "new" : "rejected",
         },
         { onConflict: "user_id,video_id,claim_id" },
       );
       if (mErr) {
-        console.warn("[discovery] Konnte Match nicht speichern:", mErr);
+        console.warn("[discovery] Konnte Klassifizierung nicht speichern:", mErr);
         return;
       }
-      matched++;
+      if (isMatch) matched++;
+      else rejected++;
     }
 
     // Simple concurrency runner
@@ -222,7 +236,15 @@ export async function runDiscoveryForUser(userId: string) {
       })
       .eq("id", runId);
 
-    return { runId, scanned: candidates.length, matched, note: "ok" as const };
+    return {
+      runId,
+      scanned: candidates.length,
+      matched,
+      rejected,
+      aiErrors,
+      claimsUsed: claims.length,
+      note: "ok" as const,
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await supabaseAdmin
