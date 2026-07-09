@@ -17,6 +17,7 @@ import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
 import { runDiscovery, getDiscoveryFeed, submitFeedback } from "@/lib/discovery.functions";
 import { cn } from "@/lib/utils";
+import type { Stance } from "@/lib/discovery/scoring";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
