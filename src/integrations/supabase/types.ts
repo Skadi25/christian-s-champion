@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      channel_preferences: {
+        Row: {
+          affinity: number
+          channel_id: string
+          channel_name: string | null
+          created_at: string
+          id: string
+          negative_count: number
+          neutral_count: number
+          platform: string
+          positive_count: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          affinity?: number
+          channel_id: string
+          channel_name?: string | null
+          created_at?: string
+          id?: string
+          negative_count?: number
+          neutral_count?: number
+          platform?: string
+          positive_count?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          affinity?: number
+          channel_id?: string
+          channel_name?: string | null
+          created_at?: string
+          id?: string
+          negative_count?: number
+          neutral_count?: number
+          platform?: string
+          positive_count?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       claims: {
         Row: {
           correct_statement: string | null
@@ -174,12 +216,14 @@ export type Database = {
           claim_id: string | null
           created_at: string
           detected_claim: string | null
+          feedback_at: string | null
           id: string
           matched_at: string
           opportunity_score: number | null
           score_breakdown: Json | null
           status: string
           topic_id: string | null
+          user_feedback: string | null
           user_id: string
           video_id: string
         }
@@ -190,12 +234,14 @@ export type Database = {
           claim_id?: string | null
           created_at?: string
           detected_claim?: string | null
+          feedback_at?: string | null
           id?: string
           matched_at?: string
           opportunity_score?: number | null
           score_breakdown?: Json | null
           status?: string
           topic_id?: string | null
+          user_feedback?: string | null
           user_id: string
           video_id: string
         }
@@ -206,12 +252,14 @@ export type Database = {
           claim_id?: string | null
           created_at?: string
           detected_claim?: string | null
+          feedback_at?: string | null
           id?: string
           matched_at?: string
           opportunity_score?: number | null
           score_breakdown?: Json | null
           status?: string
           topic_id?: string | null
+          user_feedback?: string | null
           user_id?: string
           video_id?: string
         }
