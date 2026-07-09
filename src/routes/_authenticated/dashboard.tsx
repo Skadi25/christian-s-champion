@@ -181,29 +181,32 @@ function Dashboard() {
         ) : (
           <>
             {/* KPI cards */}
-            <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="mt-10 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
               <KpiCard
-                icon={<Clock className="h-4 w-4" />}
+                emoji="🆕"
                 label="Neue Videos heute"
                 value={stats.newToday}
-                accent="signal"
+                gradient="from-blue-50 to-cyan-50"
               />
               <KpiCard
-                icon={<Flame className="h-4 w-4" />}
+                emoji="🔥"
                 label="Hohe Chancen"
                 value={stats.highOpp}
                 hint="Score ≥ 75"
+                gradient="from-orange-50 to-red-50"
               />
               <KpiCard
-                icon={<TrendingUp className="h-4 w-4" />}
+                emoji="📈"
                 label="Trend Score"
                 value={stats.avg ?? "—"}
                 hint="Ø aller Videos"
+                gradient="from-emerald-50 to-green-50"
               />
               <KpiCard
-                icon={<Inbox className="h-4 w-4" />}
+                emoji="🎯"
                 label="Zu prüfen"
                 value={stats.total}
+                gradient="from-purple-50 to-pink-50"
               />
             </div>
 
