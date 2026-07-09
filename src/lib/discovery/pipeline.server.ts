@@ -114,13 +114,20 @@ export async function runDiscoveryForUser(userId: string) {
     // ─── 2. Wide Sweep (YouTube) ─────────────────────────────────────
     const adapter = getPlatformAdapter("youtube");
     const publishedAfter = new Date(Date.now() - LOOKBACK_DAYS * 24 * 3_600_000).toISOString();
-    const queryHits: Array<{ claim_id: string; query: string; hits: number }> = [];
+    const queryHits: Array<{
+      claim_id: string;
+      query: string;
+      hits: number;
+      requests: import("@/lib/platforms/types").SearchDiagnostic[];
+      error?: string;
+    }> = [];
     const collected: Candidate[] = [];
 
     outer: for (const claim of claims) {
       const variants = queriesByClaim.get(claim.id) ?? [claim.text];
       for (const query of variants) {
         if (collected.length >= MAX_CANDIDATE_POOL) break outer;
+        const debug: import("@/lib/platforms/types").SearchDiagnostic[] = [];
         try {
           const videos = await adapter.search({
             query,
@@ -128,20 +135,23 @@ export async function runDiscoveryForUser(userId: string) {
             publishedAfter,
             language: "de",
             region: "DE",
+            debug,
           });
-          queryHits.push({ claim_id: claim.id, query, hits: videos.length });
+          queryHits.push({ claim_id: claim.id, query, hits: videos.length, requests: debug });
           for (const v of videos) {
             collected.push({ video: v, claim, source_query: query });
             if (collected.length >= MAX_CANDIDATE_POOL) break;
           }
         } catch (e) {
-          queryHits.push({ claim_id: claim.id, query, hits: 0 });
-          console.warn(`[discovery] search failed "${query}":`, e);
+          const msg = e instanceof Error ? e.message : String(e);
+          queryHits.push({ claim_id: claim.id, query, hits: 0, requests: debug, error: msg });
+          console.warn(`[discovery] search failed "${query}":`, msg);
         }
       }
     }
     trace.record("fetchCandidates", totalQueries, collected.length, {
       pool_cap: MAX_CANDIDATE_POOL,
+      published_after: publishedAfter,
       query_hits: queryHits,
     });
 

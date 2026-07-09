@@ -24,6 +24,18 @@ export type PlatformVideo = {
   raw_metadata: Record<string, unknown>;
 };
 
+export type SearchDiagnostic = {
+  url: string;
+  status: number;
+  order?: string;
+  page?: number;
+  items_returned?: number;
+  ids_collected_so_far?: number;
+  next_page_token?: boolean;
+  details_fetched?: number;
+  error?: string;
+};
+
 export type SearchQuery = {
   query: string;
   language?: string;
@@ -31,6 +43,8 @@ export type SearchQuery = {
   publishedAfter?: string;
   maxResults?: number;
   order?: "relevance" | "date" | "viewCount";
+  /** Optional debug collector; adapter pushes one entry per HTTP request. */
+  debug?: SearchDiagnostic[];
 };
 
 export type LatestQuery = {
