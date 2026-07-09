@@ -335,18 +335,66 @@ function PipelineDebug() {
               {q.data.stages
                 .filter((s) => s.stage_name === "fetchCandidates")
                 .map((s) => {
-                  const meta = (s.meta ?? {}) as { query_hits?: Array<{ query: string; hits: number }> };
+                  const meta = (s.meta ?? {}) as {
+                    query_hits?: Array<{
+                      query: string;
+                      hits: number;
+                      error?: string;
+                      requests?: Array<{
+                        url: string;
+                        status: number;
+                        order?: string;
+                        page?: number;
+                        items_returned?: number;
+                        ids_collected_so_far?: number;
+                        next_page_token?: boolean;
+                        details_fetched?: number;
+                        error?: string;
+                      }>;
+                    }>;
+                    published_after?: string;
+                  };
                   const hits = meta.query_hits ?? [];
                   return (
                     <details key={s.stage_index} className="rounded-lg bg-surface p-3">
                       <summary className="cursor-pointer text-xs font-semibold">
-                        Verwendete Suchanfragen ({hits.length})
+                        Verwendete Suchanfragen ({hits.length}) — publishedAfter: {meta.published_after ?? "—"}
                       </summary>
-                      <ul className="mt-2 space-y-1 text-xs">
+                      <ul className="mt-2 space-y-3 text-xs">
                         {hits.map((h, i) => (
-                          <li key={i} className="flex justify-between gap-4">
-                            <span className="truncate">{h.query}</span>
-                            <span className="shrink-0 tabular-nums text-muted-foreground">{h.hits}</span>
+                          <li key={i} className="rounded border border-border/50 p-2">
+                            <div className="flex justify-between gap-4">
+                              <span className="truncate font-medium">{h.query}</span>
+                              <span className="shrink-0 tabular-nums">
+                                Treffer: <b>{h.hits}</b>
+                              </span>
+                            </div>
+                            {h.error && (
+                              <div className="mt-1 text-destructive">Fehler: {h.error}</div>
+                            )}
+                            {h.requests && h.requests.length > 0 && (
+                              <details className="mt-1">
+                                <summary className="cursor-pointer text-muted-foreground">
+                                  {h.requests.length} HTTP-Request(s)
+                                </summary>
+                                <ul className="mt-1 space-y-1">
+                                  {h.requests.map((r, j) => (
+                                    <li key={j} className="break-all font-mono text-[10px]">
+                                      <div>
+                                        [{r.status}] order={r.order ?? "-"} page={r.page ?? "-"}{" "}
+                                        items={r.items_returned ?? r.details_fetched ?? "-"}{" "}
+                                        collected={r.ids_collected_so_far ?? "-"}{" "}
+                                        next={r.next_page_token ? "yes" : "no"}
+                                      </div>
+                                      <div className="text-muted-foreground">{r.url}</div>
+                                      {r.error && (
+                                        <div className="text-destructive">{r.error}</div>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
                           </li>
                         ))}
                       </ul>
