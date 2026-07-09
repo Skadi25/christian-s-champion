@@ -11,9 +11,6 @@ import {
   Eye,
   Heart,
   Flame,
-  TrendingUp,
-  Clock,
-  Inbox,
   ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
