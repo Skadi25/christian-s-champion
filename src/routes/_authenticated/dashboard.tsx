@@ -666,6 +666,7 @@ function RejectedSection({ rejected }: { rejected: Match[] }) {
 function RejectedCard({ match }: { match: Match }) {
   const v = match.video;
   const conf = Math.round(((match.ai_confidence as number | null) ?? 0) * 100);
+  const stance = ((match as { stance?: Stance | null }).stance ?? null) as Stance | null;
   return (
     <div className="flex gap-3 rounded-xl border border-border/60 bg-white p-3">
       {v?.thumbnail_url ? (
@@ -692,16 +693,19 @@ function RejectedCard({ match }: { match: Match }) {
           </a>
           <span
             className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600"
-            title="KI-Confidence, dass das Video die Falschaussage vertritt"
+            title="KI-Confidence"
           >
             {conf}%
           </span>
         </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          {v?.channel_name ?? "—"}
-          {match.topic?.name && <> · 🎯 {match.topic.name}</>}
-          {match.claim?.text && <> · „{match.claim.text}"</>}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <StanceBadge stance={stance} />
+          <p className="text-[11px] text-muted-foreground">
+            {v?.channel_name ?? "—"}
+            {match.topic?.name && <> · 🎯 {match.topic.name}</>}
+            {match.claim?.text && <> · „{match.claim.text}"</>}
+          </p>
+        </div>
         {match.ai_reasoning && (
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
             💭 {match.ai_reasoning}
