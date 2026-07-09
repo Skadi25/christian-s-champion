@@ -154,6 +154,42 @@ export type Database = {
         }
         Relationships: []
       }
+      stance_preferences: {
+        Row: {
+          affinity: number
+          created_at: string
+          id: string
+          negative_count: number
+          neutral_count: number
+          positive_count: number
+          stance: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          affinity?: number
+          created_at?: string
+          id?: string
+          negative_count?: number
+          neutral_count?: number
+          positive_count?: number
+          stance: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          affinity?: number
+          created_at?: string
+          id?: string
+          negative_count?: number
+          neutral_count?: number
+          positive_count?: number
+          stance?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       topics: {
         Row: {
           color: string
@@ -221,6 +257,7 @@ export type Database = {
           matched_at: string
           opportunity_score: number | null
           score_breakdown: Json | null
+          stance: string | null
           status: string
           topic_id: string | null
           user_feedback: string | null
@@ -239,6 +276,7 @@ export type Database = {
           matched_at?: string
           opportunity_score?: number | null
           score_breakdown?: Json | null
+          stance?: string | null
           status?: string
           topic_id?: string | null
           user_feedback?: string | null
@@ -257,6 +295,7 @@ export type Database = {
           matched_at?: string
           opportunity_score?: number | null
           score_breakdown?: Json | null
+          stance?: string | null
           status?: string
           topic_id?: string | null
           user_feedback?: string | null

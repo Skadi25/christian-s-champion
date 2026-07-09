@@ -17,6 +17,7 @@ import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
 import { runDiscovery, getDiscoveryFeed, submitFeedback } from "@/lib/discovery.functions";
 import { cn } from "@/lib/utils";
+import type { Stance } from "@/lib/discovery/scoring";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -113,20 +114,25 @@ function Dashboard() {
 
   async function handleRun() {
     setRunning(true);
-    const t = toast.loading("Durchsuche YouTube (bis zu 150 Videos) und klassifiziere per KI …");
+    const t = toast.loading(
+      "Durchsuche YouTube (bis zu 5.000 Kandidaten) und klassifiziere die besten per KI …",
+    );
     try {
       const res = await runDiscoveryFn();
       toast.dismiss(t);
       if (res?.note === "no_claims") {
         toast.warning("Noch keine aktiven Claims. Lege welche im Themen-Editor an.");
       } else {
+        const s = res?.stanceStats;
+        const stanceLine = s
+          ? ` · 🔴 ${s.promotes} verbreitet · 🟡 ${s.mentions} erwähnt · 🟢 ${s.debunks} widerlegt`
+          : "";
         const parts = [
-          `✅ ${res?.matched ?? 0} relevante Videos`,
+          `✅ ${res?.matched ?? 0} priorisiert`,
           `❌ ${res?.rejected ?? 0} verworfen`,
-          `von ${res?.scanned ?? 0} geprüften`,
-          `(${res?.claimsUsed ?? 0} Claims)`,
+          `aus ${res?.scanned ?? 0} geprüften (Pool: ${res?.poolSize ?? 0})`,
         ];
-        toast.success(parts.join(" · "), { duration: 6000 });
+        toast.success(parts.join(" · ") + stanceLine, { duration: 8000 });
       }
       qc.invalidateQueries({ queryKey: ["discovery-feed"] });
     } catch (e) {
@@ -287,12 +293,19 @@ function VideoMatchCard({
   const v = match.video;
   const score = match.opportunity_score ?? 0;
   const bd = (match.score_breakdown ?? null) as {
+    stance?: number;
     reach?: number;
     growth?: number;
     recency?: number;
     engagement?: number;
     confidence?: number;
+    language?: number;
+    channel?: number;
+    stanceAffinity?: number;
+    stanceLabel?: Stance | null;
+    weights?: Record<string, number>;
   } | null;
+  const stance = ((match as { stance?: Stance | null }).stance ?? bd?.stanceLabel ?? null) as Stance | null;
 
   const scoreColor =
     score >= 75
@@ -333,6 +346,7 @@ function VideoMatchCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
+                <StanceBadge stance={stance} />
                 {match.topic?.name && (
                   <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
                     🎯 {match.topic.name}
@@ -414,11 +428,15 @@ function VideoMatchCard({
           {/* Expanded breakdown */}
           {expanded && bd && (
             <div className="mt-3 grid gap-2 rounded-lg bg-surface p-3 text-xs">
-              <ScoreBar label="🌍 Reichweite" value={bd.reach ?? 0} weight={35} />
-              <ScoreBar label="📈 Wachstum" value={bd.growth ?? 0} weight={25} />
-              <ScoreBar label="⏱ Aktualität" value={bd.recency ?? 0} weight={15} />
-              <ScoreBar label="💬 Engagement" value={bd.engagement ?? 0} weight={15} />
-              <ScoreBar label="🤖 KI-Confidence" value={bd.confidence ?? 0} weight={10} />
+              <ScoreBar label="🎯 Stance" value={bd.stance ?? 0} weight={45} />
+              <ScoreBar label="🌍 Reichweite" value={bd.reach ?? 0} weight={15} />
+              <ScoreBar label="📈 Wachstum" value={bd.growth ?? 0} weight={8} />
+              <ScoreBar label="⏱ Aktualität" value={bd.recency ?? 0} weight={7} />
+              <ScoreBar label="💬 Engagement" value={bd.engagement ?? 0} weight={5} />
+              <ScoreBar label="🇩🇪 Sprache" value={bd.language ?? 0} weight={5} />
+              <ScoreBar label="📺 Kanal-Fit" value={bd.channel ?? 0} weight={5} />
+              <ScoreBar label="🧠 Stance-Fit" value={bd.stanceAffinity ?? 0} weight={5} />
+              <ScoreBar label="🤖 KI-Confidence" value={bd.confidence ?? 0} weight={5} />
               {match.ai_reasoning && (
                 <p className="mt-2 rounded bg-white p-2 text-muted-foreground">
                   💡 {match.ai_reasoning}
@@ -648,6 +666,7 @@ function RejectedSection({ rejected }: { rejected: Match[] }) {
 function RejectedCard({ match }: { match: Match }) {
   const v = match.video;
   const conf = Math.round(((match.ai_confidence as number | null) ?? 0) * 100);
+  const stance = ((match as { stance?: Stance | null }).stance ?? null) as Stance | null;
   return (
     <div className="flex gap-3 rounded-xl border border-border/60 bg-white p-3">
       {v?.thumbnail_url ? (
@@ -674,16 +693,19 @@ function RejectedCard({ match }: { match: Match }) {
           </a>
           <span
             className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600"
-            title="KI-Confidence, dass das Video die Falschaussage vertritt"
+            title="KI-Confidence"
           >
             {conf}%
           </span>
         </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          {v?.channel_name ?? "—"}
-          {match.topic?.name && <> · 🎯 {match.topic.name}</>}
-          {match.claim?.text && <> · „{match.claim.text}"</>}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <StanceBadge stance={stance} />
+          <p className="text-[11px] text-muted-foreground">
+            {v?.channel_name ?? "—"}
+            {match.topic?.name && <> · 🎯 {match.topic.name}</>}
+            {match.claim?.text && <> · „{match.claim.text}"</>}
+          </p>
+        </div>
         {match.ai_reasoning && (
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
             💭 {match.ai_reasoning}
@@ -773,4 +795,28 @@ function FeedbackButtons({
     </div>
   );
 }
+
+function StanceBadge({ stance }: { stance: Stance | null }) {
+  if (!stance) return null;
+  const map: Record<Stance, { emoji: string; label: string; cls: string }> = {
+    promotes: { emoji: "🔴", label: "Verbreitet Mythos", cls: "bg-red-100 text-red-700 border-red-200" },
+    mentions: { emoji: "🟡", label: "Erwähnt neutral", cls: "bg-amber-100 text-amber-700 border-amber-200" },
+    debunks: { emoji: "🟢", label: "Widerlegt bereits", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+    unrelated: { emoji: "⚪", label: "Unabhängig", cls: "bg-slate-100 text-slate-600 border-slate-200" },
+  };
+  const s = map[stance];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        s.cls,
+      )}
+      title={s.label}
+    >
+      <span>{s.emoji}</span>
+      <span>{s.label}</span>
+    </span>
+  );
+}
+
 
