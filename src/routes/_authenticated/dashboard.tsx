@@ -5,17 +5,22 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   Sparkles,
   Plus,
-  ArrowRight,
   RefreshCw,
   ExternalLink,
-  ChevronDown,
   Loader2,
+  Eye,
+  Heart,
+  Flame,
+  TrendingUp,
+  Clock,
+  Inbox,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
-import { runDiscovery, getDiscoveryFeed, submitFeedback, getLastRunTrace } from "@/lib/discovery.functions";
+import { runDiscovery, getDiscoveryFeed, submitFeedback } from "@/lib/discovery.functions";
 import { cn } from "@/lib/utils";
 import type { Stance } from "@/lib/discovery/scoring";
 
@@ -24,6 +29,7 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 });
 
 type Match = Awaited<ReturnType<typeof getDiscoveryFeed>>["matches"][number];
+type FeedbackRating = "relevant" | "neutral" | "not_relevant";
 
 function Dashboard() {
   const qc = useQueryClient();
@@ -31,8 +37,6 @@ function Dashboard() {
   const [displayName, setDisplayName] = useState<string>("");
   const [seeding, setSeeding] = useState(false);
   const [running, setRunning] = useState(false);
-  const [selectedTopic, setSelectedTopic] = useState<string | "all">("all");
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   const runDiscoveryFn = useServerFn(runDiscovery);
   const getFeedFn = useServerFn(getDiscoveryFeed);
@@ -56,7 +60,7 @@ function Dashboard() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("topics")
-        .select("id, name, claims:claims(count)")
+        .select("id, name")
         .order("created_at", { ascending: true });
       if (error) throw error;
       return data;
@@ -70,33 +74,26 @@ function Dashboard() {
   });
 
   const totalTopics = topicsQ.data?.length ?? 0;
-  const totalClaims =
-    topicsQ.data?.reduce((s, t) => s + (t.claims?.[0]?.count ?? 0), 0) ?? 0;
   const matches = feedQ.data?.matches ?? [];
   const lastRun = feedQ.data?.lastRun ?? null;
 
-  const filtered = useMemo(
-    () =>
-      selectedTopic === "all"
-        ? matches
-        : matches.filter((m) => m.topic?.id === selectedTopic),
-    [matches, selectedTopic],
-  );
-
   const stats = useMemo(() => {
-    const scores = matches
-      .map((m) => m.opportunity_score)
-      .filter((n): n is number => typeof n === "number");
-    const avg =
-      scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const newToday = matches.filter(
       (m) => m.matched_at && new Date(m.matched_at).getTime() >= today.getTime(),
     ).length;
-    const top = matches[0]?.opportunity_score ?? null;
-    return { avg, newToday, top, total: matches.length };
+    const highOpp = matches.filter((m) => (m.opportunity_score ?? 0) >= 75).length;
+    const scores = matches
+      .map((m) => m.opportunity_score)
+      .filter((n): n is number => typeof n === "number");
+    const avg =
+      scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+    return { newToday, highOpp, avg, total: matches.length };
   }, [matches]);
+
+  const topFive = matches.slice(0, 5);
+  const rest = matches.slice(5);
 
   async function handleStarterPack() {
     if (!userId) return;
@@ -114,36 +111,21 @@ function Dashboard() {
 
   async function handleRun() {
     setRunning(true);
-    const t = toast.loading(
-      "Durchsuche YouTube (bis zu 5.000 Kandidaten) und klassifiziere die besten per KI …",
-    );
+    const t = toast.loading("Suche neue Chancen …");
     try {
       const res = await runDiscoveryFn();
       toast.dismiss(t);
       if (res?.note === "no_claims") {
         toast.warning("Noch keine aktiven Claims. Lege welche im Themen-Editor an.");
       } else if (res?.note === "quota_exceeded") {
-        const tail = (res as { apiKeyTail?: string | null }).apiKeyTail;
-        toast.error(
-          `YouTube API-Limit erreicht${tail ? ` (Key …${tail})` : ""}. Bitte später erneut versuchen.`,
-          { duration: 10000 },
-        );
+        toast.error("Tageslimit erreicht. Bitte später erneut versuchen.", { duration: 8000 });
       } else {
-        const s = res?.stanceStats;
-        const stanceLine = s
-          ? ` · 🔴 ${s.promotes} verbreitet · 🟡 ${s.mentions} erwähnt · 🟢 ${s.debunks} widerlegt`
-          : "";
-        const parts = [
-          `✅ ${res?.matched ?? 0} priorisiert`,
-          `❌ ${res?.rejected ?? 0} verworfen`,
-          `aus ${res?.scanned ?? 0} geprüften (Pool: ${res?.poolSize ?? 0})`,
-        ];
-        toast.success(parts.join(" · ") + stanceLine, { duration: 8000 });
+        toast.success(`${res?.matched ?? 0} neue Chancen gefunden.`, { duration: 5000 });
       }
       qc.invalidateQueries({ queryKey: ["discovery-feed"] });
     } catch (e) {
       toast.dismiss(t);
-      toast.error(e instanceof Error ? e.message : "Discovery fehlgeschlagen.");
+      toast.error(e instanceof Error ? e.message : "Konnte nicht aktualisieren.");
     } finally {
       setRunning(false);
     }
@@ -156,19 +138,16 @@ function Dashboard() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl px-6 py-10 md:px-10">
+      <div className="mx-auto max-w-7xl px-6 py-12 md:px-12">
         {/* Header */}
-        <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-6">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wider text-signal">
-              Discovery
-            </p>
-            <h1 className="font-display mt-2 text-4xl font-bold tracking-tight md:text-5xl">
+            <h1 className="font-display text-4xl font-bold tracking-tight md:text-5xl">
               {greeting}
-              {displayName ? `, ${displayName}` : ""} 👋
+              {displayName ? `, ${displayName}` : ""}
             </h1>
-            <p className="mt-2 text-base text-muted-foreground">
-              Das ist heute wichtig für dich — priorisiert nach Reichweite und Wirkung.
+            <p className="mt-3 text-base text-muted-foreground">
+              Deine besten Chancen — heute priorisiert.
             </p>
           </div>
           {!empty && (
@@ -176,14 +155,14 @@ function Dashboard() {
               <button
                 onClick={handleRun}
                 disabled={running}
-                className="inline-flex items-center gap-2 rounded-xl bg-signal px-5 py-2.5 text-sm font-semibold text-signal-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm font-semibold text-background shadow-sm transition hover:opacity-90 disabled:opacity-50"
               >
                 {running ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                {running ? "Suche läuft …" : "Jetzt aktualisieren"}
+                {running ? "Aktualisiere …" : "Aktualisieren"}
               </button>
               {lastRun?.finished_at && (
                 <p className="text-xs text-muted-foreground">
@@ -198,83 +177,76 @@ function Dashboard() {
           <EmptyState onLoad={handleStarterPack} seeding={seeding} />
         ) : (
           <>
-            {/* Stats */}
-            <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <StatCard emoji="🎯" label="Themen" value={totalTopics} tone="signal" />
-              <StatCard emoji="⚠️" label="Claims" value={totalClaims} tone="warning" />
-              <StatCard emoji="🔥" label="Neue Videos heute" value={stats.newToday} muted={stats.newToday === 0} />
-              <StatCard
-                emoji="📈"
-                label="Ø Opportunity Score"
+            {/* KPI cards */}
+            <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
+              <KpiCard
+                icon={<Clock className="h-4 w-4" />}
+                label="Neue Videos heute"
+                value={stats.newToday}
+                accent="signal"
+              />
+              <KpiCard
+                icon={<Flame className="h-4 w-4" />}
+                label="Hohe Chancen"
+                value={stats.highOpp}
+                hint="Score ≥ 75"
+              />
+              <KpiCard
+                icon={<TrendingUp className="h-4 w-4" />}
+                label="Trend Score"
                 value={stats.avg ?? "—"}
-                muted={stats.avg === null}
+                hint="Ø aller Videos"
+              />
+              <KpiCard
+                icon={<Inbox className="h-4 w-4" />}
+                label="Zu prüfen"
+                value={stats.total}
               />
             </div>
 
-            {/* Feed */}
-            <section className="mt-10">
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                  <h2 className="font-display text-2xl font-bold tracking-tight">
-                    🔥 Priorisierte Videos
-                  </h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Sortiert nach Opportunity Score. Klicke eine Karte für die Aufschlüsselung.
-                  </p>
-                </div>
-                {topicsQ.data && topicsQ.data.length > 0 && matches.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    <FilterChip
-                      active={selectedTopic === "all"}
-                      onClick={() => setSelectedTopic("all")}
-                    >
-                      Alle · {matches.length}
-                    </FilterChip>
-                    {topicsQ.data.map((t) => {
-                      const count = matches.filter((m) => m.topic?.id === t.id).length;
-                      if (count === 0) return null;
-                      return (
-                        <FilterChip
-                          key={t.id}
-                          active={selectedTopic === t.id}
-                          onClick={() => setSelectedTopic(t.id)}
-                        >
-                          {t.name} · {count}
-                        </FilterChip>
-                      );
-                    })}
-                  </div>
-                )}
+            {feedQ.isLoading ? (
+              <div className="mt-14 grid gap-4 md:grid-cols-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="h-72 animate-pulse rounded-3xl border border-border bg-white"
+                  />
+                ))}
               </div>
+            ) : matches.length === 0 ? (
+              <FeedEmpty onRun={handleRun} running={running} />
+            ) : (
+              <>
+                {/* Beste Chancen */}
+                <section className="mt-14">
+                  <SectionHeader
+                    emoji="🔥"
+                    title="Beste Chancen heute"
+                    subtitle={`Die ${topFive.length} wichtigsten Videos für dich.`}
+                  />
+                  <div className="mt-6 grid gap-5 md:grid-cols-2">
+                    {topFive.map((m, i) => (
+                      <TopOpportunityCard key={m.id} match={m} rank={i + 1} />
+                    ))}
+                  </div>
+                </section>
 
-              {feedQ.isLoading ? (
-                <div className="mt-6 grid gap-3">
-                  {[0, 1, 2].map((i) => (
-                    <div
-                      key={i}
-                      className="h-40 animate-pulse rounded-2xl border border-border bg-white"
+                {/* Neue Chancen */}
+                {rest.length > 0 && (
+                  <section className="mt-16">
+                    <SectionHeader
+                      title="Neue Chancen"
+                      subtitle={`${rest.length} weitere Videos für dich sortiert.`}
                     />
-                  ))}
-                </div>
-              ) : filtered.length === 0 ? (
-                <FeedEmpty hasMatches={matches.length > 0} onRun={handleRun} running={running} />
-              ) : (
-                <div className="mt-6 grid gap-3">
-                  {filtered.map((m) => (
-                    <VideoMatchCard
-                      key={m.id}
-                      match={m}
-                      expanded={expanded === m.id}
-                      onToggle={() => setExpanded(expanded === m.id ? null : m.id)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <RejectedSection rejected={feedQ.data?.rejected ?? []} />
-
-            <PipelineDebug />
+                    <div className="mt-6 grid gap-3">
+                      {rest.map((m) => (
+                        <CompactMatchCard key={m.id} match={m} />
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </>
+            )}
           </>
         )}
       </div>
@@ -282,409 +254,338 @@ function Dashboard() {
   );
 }
 
-function PipelineDebug() {
-  const [open, setOpen] = useState(false);
-  const getTrace = useServerFn(getLastRunTrace);
-  const q = useQuery({
-    queryKey: ["last-run-trace"],
-    queryFn: () => getTrace(),
-    enabled: open,
-  });
+/* ─────────────────────────────  Sections & Cards  ───────────────────────────── */
 
+function SectionHeader({
+  emoji,
+  title,
+  subtitle,
+}: {
+  emoji?: string;
+  title: string;
+  subtitle?: string;
+}) {
   return (
-    <section className="mt-10 rounded-2xl border border-border bg-white">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-5 py-3 text-left text-sm font-semibold"
-      >
-        <span>🔍 Pipeline-Details des letzten Runs</span>
-        <ChevronDown className={cn("h-4 w-4 transition", open && "rotate-180")} />
-      </button>
-      {open && (
-        <div className="border-t border-border p-4 text-sm">
-          {q.isLoading ? (
-            <p className="text-muted-foreground">Lade Trace …</p>
-          ) : !q.data?.run ? (
-            <p className="text-muted-foreground">Noch kein Discovery-Lauf vorhanden.</p>
-          ) : (
-            <div className="space-y-4">
-              <div className="text-xs text-muted-foreground">
-                Run vom {q.data.run.started_at && new Date(q.data.run.started_at).toLocaleString("de-DE")} ·
-                Status: <b>{q.data.run.status}</b>
-                {q.data.run.error && <> · Fehler: {q.data.run.error}</>}
-              </div>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border text-left text-muted-foreground">
-                    <th className="py-1.5">#</th>
-                    <th>Stage</th>
-                    <th className="text-right">Input</th>
-                    <th className="text-right">Output</th>
-                    <th className="text-right">Verlust</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {q.data.stages.map((s) => (
-                    <tr key={s.stage_index} className="border-b border-border/60">
-                      <td className="py-1.5 text-muted-foreground">{s.stage_index}</td>
-                      <td className="font-medium">{s.stage_name}</td>
-                      <td className="text-right tabular-nums">{s.input_count}</td>
-                      <td className="text-right tabular-nums">{s.output_count}</td>
-                      <td className="text-right tabular-nums text-muted-foreground">
-                        {s.input_count > 0 ? s.input_count - s.output_count : 0}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {q.data.stages
-                .filter((s) => s.stage_name === "fetchCandidates")
-                .map((s) => {
-                  const meta = (s.meta ?? {}) as {
-                    query_hits?: Array<{
-                      query: string;
-                      hits: number;
-                      error?: string;
-                      requests?: Array<{
-                        url: string;
-                        status: number;
-                        order?: string;
-                        page?: number;
-                        items_returned?: number;
-                        ids_collected_so_far?: number;
-                        next_page_token?: boolean;
-                        details_fetched?: number;
-                        error?: string;
-                      }>;
-                    }>;
-                    published_after?: string;
-                  };
-                  const hits = meta.query_hits ?? [];
-                  return (
-                    <details key={s.stage_index} className="rounded-lg bg-surface p-3">
-                      <summary className="cursor-pointer text-xs font-semibold">
-                        Verwendete Suchanfragen ({hits.length}) — publishedAfter: {meta.published_after ?? "—"}
-                      </summary>
-                      <ul className="mt-2 space-y-3 text-xs">
-                        {hits.map((h, i) => (
-                          <li key={i} className="rounded border border-border/50 p-2">
-                            <div className="flex justify-between gap-4">
-                              <span className="truncate font-medium">{h.query}</span>
-                              <span className="shrink-0 tabular-nums">
-                                Treffer: <b>{h.hits}</b>
-                              </span>
-                            </div>
-                            {h.error && (
-                              <div className="mt-1 text-destructive">Fehler: {h.error}</div>
-                            )}
-                            {h.requests && h.requests.length > 0 && (
-                              <details className="mt-1">
-                                <summary className="cursor-pointer text-muted-foreground">
-                                  {h.requests.length} HTTP-Request(s)
-                                </summary>
-                                <ul className="mt-1 space-y-1">
-                                  {h.requests.map((r, j) => (
-                                    <li key={j} className="break-all font-mono text-[10px]">
-                                      <div>
-                                        [{r.status}] order={r.order ?? "-"} page={r.page ?? "-"}{" "}
-                                        items={r.items_returned ?? r.details_fetched ?? "-"}{" "}
-                                        collected={r.ids_collected_so_far ?? "-"}{" "}
-                                        next={r.next_page_token ? "yes" : "no"}
-                                      </div>
-                                      <div className="text-muted-foreground">{r.url}</div>
-                                      {r.error && (
-                                        <div className="text-destructive">{r.error}</div>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </details>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  );
-                })}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+    <div>
+      <h2 className="font-display flex items-center gap-2 text-2xl font-bold tracking-tight">
+        {emoji && <span>{emoji}</span>}
+        {title}
+      </h2>
+      {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
+    </div>
   );
 }
 
-function VideoMatchCard({
-  match,
-  expanded,
-  onToggle,
+function KpiCard({
+  icon,
+  label,
+  value,
+  hint,
+  accent,
 }: {
-  match: Match;
-  expanded: boolean;
-  onToggle: () => void;
+  icon: React.ReactNode;
+  label: string;
+  value: number | string;
+  hint?: string;
+  accent?: "signal";
 }) {
+  return (
+    <div className="rounded-3xl border border-border bg-white p-6 shadow-sm">
+      <div
+        className={cn(
+          "inline-flex h-8 w-8 items-center justify-center rounded-full",
+          accent === "signal"
+            ? "bg-signal/10 text-signal"
+            : "bg-muted text-muted-foreground",
+        )}
+      >
+        {icon}
+      </div>
+      <p className="mt-6 text-4xl font-bold tracking-tight tabular-nums">{value}</p>
+      <p className="mt-1.5 text-sm font-medium text-muted-foreground">{label}</p>
+      {hint && <p className="mt-0.5 text-xs text-muted-foreground/70">{hint}</p>}
+    </div>
+  );
+}
+
+function TopOpportunityCard({ match, rank }: { match: Match; rank: number }) {
   const v = match.video;
   const score = match.opportunity_score ?? 0;
-  const bd = (match.score_breakdown ?? null) as {
-    stance?: number;
-    reach?: number;
-    growth?: number;
-    recency?: number;
-    engagement?: number;
-    confidence?: number;
-    language?: number;
-    channel?: number;
-    stanceAffinity?: number;
-    stanceLabel?: Stance | null;
-    weights?: Record<string, number>;
-  } | null;
-  const stance = ((match as { stance?: Stance | null }).stance ?? bd?.stanceLabel ?? null) as Stance | null;
-
-  const scoreColor =
-    score >= 75
-      ? "bg-red-100 text-red-700"
-      : score >= 50
-      ? "bg-amber-100 text-amber-700"
-      : "bg-slate-100 text-slate-600";
+  const stance = ((match as { stance?: Stance | null }).stance ?? null) as Stance | null;
+  const platformLabel =
+    v?.platform === "youtube" ? "YouTube" : v?.platform === "tiktok" ? "TikTok" : v?.platform ?? "—";
 
   return (
-    <div className="card-hover overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
-      <div className="flex flex-col gap-4 p-4 md:flex-row">
-        {/* Thumbnail */}
+    <article className="group card-hover overflow-hidden rounded-3xl border border-border bg-white shadow-sm">
+      <a
+        href={v?.url ?? "#"}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="relative block overflow-hidden"
+      >
         {v?.thumbnail_url ? (
-          <a
-            href={v.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="relative block w-full shrink-0 overflow-hidden rounded-xl md:w-56"
-          >
-            <img
-              src={v.thumbnail_url}
-              alt=""
-              className="aspect-video h-full w-full object-cover"
-              loading="lazy"
-            />
-            {v.duration_seconds ? (
-              <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-mono text-white">
-                {formatDuration(v.duration_seconds)}
-              </span>
-            ) : null}
-          </a>
+          <img
+            src={v.thumbnail_url}
+            alt=""
+            className="aspect-video w-full object-cover transition group-hover:scale-[1.02]"
+            loading="lazy"
+          />
         ) : (
-          <div className="aspect-video w-full shrink-0 rounded-xl bg-muted md:w-56" />
+          <div className="aspect-video w-full bg-muted" />
+        )}
+        <div className="absolute left-4 top-4 flex items-center gap-2">
+          <span className="rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
+            #{rank}
+          </span>
+          <span className="rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-foreground shadow-sm backdrop-blur">
+            {platformLabel}
+          </span>
+        </div>
+        <div className="absolute right-4 top-4">
+          <ScorePill score={score} />
+        </div>
+        {v?.duration_seconds ? (
+          <span className="absolute bottom-3 right-3 rounded-md bg-black/75 px-1.5 py-0.5 font-mono text-[10px] text-white">
+            {formatDuration(v.duration_seconds)}
+          </span>
+        ) : null}
+      </a>
+
+      <div className="p-6">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {stance && <StanceBadge stance={stance} />}
+          {match.topic?.name && (
+            <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
+              {match.topic.name}
+            </span>
+          )}
+        </div>
+
+        <a
+          href={v?.url ?? "#"}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="mt-3 line-clamp-2 block text-lg font-semibold leading-snug tracking-tight hover:text-signal"
+        >
+          {v?.title || "Ohne Titel"}
+        </a>
+
+        <p className="mt-1 text-sm text-muted-foreground">
+          {v?.channel_name ?? "Unbekannter Creator"}
+          {v?.published_at && <> · {formatRelativeTime(v.published_at)}</>}
+        </p>
+
+        {match.ai_summary && (
+          <p className="mt-4 line-clamp-2 rounded-2xl bg-muted/60 px-4 py-3 text-sm leading-relaxed text-foreground/80">
+            {match.ai_summary}
+          </p>
         )}
 
-        {/* Body */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <StanceBadge stance={stance} />
-                {match.topic?.name && (
-                  <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
-                    🎯 {match.topic.name}
-                  </span>
-                )}
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {v?.platform === "youtube" ? "▶ YouTube" : v?.platform}
-                </span>
-              </div>
-              <a
-                href={v?.url ?? "#"}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="mt-1.5 line-clamp-2 block font-semibold leading-snug hover:text-signal"
-              >
-                {v?.title || "Ohne Titel"}
-              </a>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {v?.channel_name ?? "Unbekannter Kanal"}
-                {v?.published_at && <> · {formatRelativeTime(v.published_at)}</>}
-              </p>
-            </div>
-            <div
-              className={cn(
-                "shrink-0 rounded-xl px-3 py-2 text-center",
-                scoreColor,
-              )}
-            >
-              <p className="text-[10px] font-semibold uppercase tracking-wide">Score</p>
-              <p className="text-2xl font-bold leading-none">{score}</p>
-            </div>
-          </div>
+        <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <Eye className="h-3.5 w-3.5" /> {formatCount(v?.view_count)}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Heart className="h-3.5 w-3.5" /> {formatCount(v?.like_count)}
+          </span>
+        </div>
 
-          {/* Metrics row */}
-          <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1">👁 {formatCount(v?.view_count)}</span>
-            <span className="inline-flex items-center gap-1">❤️ {formatCount(v?.like_count)}</span>
-            <span className="inline-flex items-center gap-1">💬 {formatCount(v?.comment_count)}</span>
-            {v?.published_at && (
-              <span className="inline-flex items-center gap-1">
-                📈 {formatPerHour(v.view_count, v.published_at)}/h
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <a
+            href={v?.url ?? "#"}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-xs font-semibold text-background transition hover:opacity-90"
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> Video öffnen
+          </a>
+          <FeedbackButtons
+            matchId={match.id}
+            current={(match.user_feedback as FeedbackRating | null) ?? null}
+            size="sm"
+          />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function CompactMatchCard({ match }: { match: Match }) {
+  const v = match.video;
+  const score = match.opportunity_score ?? 0;
+  const stance = ((match as { stance?: Stance | null }).stance ?? null) as Stance | null;
+  const platformLabel =
+    v?.platform === "youtube" ? "YouTube" : v?.platform === "tiktok" ? "TikTok" : v?.platform ?? "—";
+
+  return (
+    <article className="card-hover flex flex-col gap-4 rounded-2xl border border-border bg-white p-4 shadow-sm sm:flex-row">
+      <a
+        href={v?.url ?? "#"}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="relative block w-full shrink-0 overflow-hidden rounded-xl sm:w-52"
+      >
+        {v?.thumbnail_url ? (
+          <img
+            src={v.thumbnail_url}
+            alt=""
+            className="aspect-video h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="aspect-video w-full bg-muted" />
+        )}
+      </a>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {platformLabel}
               </span>
-            )}
-          </div>
-
-          {/* AI summary */}
-          {match.ai_summary && (
-            <div className="mt-3 rounded-lg border-l-2 border-signal/60 bg-signal/5 px-3 py-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-signal">
-                ⚠️ Erkannter Claim
-              </p>
-              <p className="mt-0.5 text-sm text-foreground">{match.ai_summary}</p>
+              {stance && <StanceBadge stance={stance} compact />}
             </div>
-          )}
-
-          {/* Actions */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
             <a
               href={v?.url ?? "#"}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-medium transition hover:bg-accent"
+              className="mt-1 line-clamp-2 block font-semibold leading-snug hover:text-signal"
             >
-              <ExternalLink className="h-3.5 w-3.5" /> Auf {v?.platform === "youtube" ? "YouTube" : "der Plattform"} öffnen
+              {v?.title || "Ohne Titel"}
             </a>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {v?.channel_name ?? "—"}
+              {v?.published_at && <> · {formatRelativeTime(v.published_at)}</>}
+            </p>
+          </div>
+          <ScorePill score={score} />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Eye className="h-3 w-3" /> {formatCount(v?.view_count)}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Heart className="h-3 w-3" /> {formatCount(v?.like_count)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
             <FeedbackButtons
               matchId={match.id}
               current={(match.user_feedback as FeedbackRating | null) ?? null}
+              size="sm"
             />
-            <button
-              onClick={onToggle}
-              className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
+            <a
+              href={v?.url ?? "#"}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium transition hover:bg-accent"
             >
-              Warum diese Priorität?
-              <ChevronDown className={cn("h-3.5 w-3.5 transition", expanded && "rotate-180")} />
-            </button>
+              <ExternalLink className="h-3 w-3" /> Öffnen
+            </a>
           </div>
-
-          {/* Expanded breakdown */}
-          {expanded && bd && (
-            <div className="mt-3 grid gap-2 rounded-lg bg-surface p-3 text-xs">
-              <ScoreBar label="🎯 Stance" value={bd.stance ?? 0} weight={45} />
-              <ScoreBar label="🌍 Reichweite" value={bd.reach ?? 0} weight={15} />
-              <ScoreBar label="📈 Wachstum" value={bd.growth ?? 0} weight={8} />
-              <ScoreBar label="⏱ Aktualität" value={bd.recency ?? 0} weight={7} />
-              <ScoreBar label="💬 Engagement" value={bd.engagement ?? 0} weight={5} />
-              <ScoreBar label="🇩🇪 Sprache" value={bd.language ?? 0} weight={5} />
-              <ScoreBar label="📺 Kanal-Fit" value={bd.channel ?? 0} weight={5} />
-              <ScoreBar label="🧠 Stance-Fit" value={bd.stanceAffinity ?? 0} weight={5} />
-              <ScoreBar label="🤖 KI-Confidence" value={bd.confidence ?? 0} weight={5} />
-              {match.ai_reasoning && (
-                <p className="mt-2 rounded bg-white p-2 text-muted-foreground">
-                  💡 {match.ai_reasoning}
-                </p>
-              )}
-            </div>
-          )}
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
-function ScoreBar({ label, value, weight }: { label: string; value: number; weight: number }) {
+function ScorePill({ score }: { score: number }) {
+  const tone =
+    score >= 75
+      ? "bg-red-500 text-white"
+      : score >= 50
+      ? "bg-amber-500 text-white"
+      : "bg-white text-foreground";
   return (
-    <div className="grid grid-cols-[110px_1fr_60px] items-center gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-signal transition-all"
-          style={{ width: `${Math.max(2, value)}%` }}
-        />
-      </div>
-      <span className="text-right font-mono text-[11px] text-muted-foreground">
-        {value} × {weight}%
-      </span>
-    </div>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
+    <div
       className={cn(
-        "rounded-full border px-3 py-1 text-xs font-medium transition",
-        active
-          ? "border-signal bg-signal/10 text-signal"
-          : "border-border bg-white text-muted-foreground hover:bg-accent",
+        "flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold shadow-sm backdrop-blur",
+        tone,
+      )}
+      title="Opportunity Score"
+    >
+      <Flame className="h-3 w-3" />
+      {score}
+    </div>
+  );
+}
+
+function StanceBadge({ stance, compact }: { stance: Stance; compact?: boolean }) {
+  const map: Record<Stance, { dot: string; label: string; cls: string }> = {
+    promotes: { dot: "bg-red-500", label: "Verbreitet", cls: "bg-red-50 text-red-700" },
+    mentions: { dot: "bg-amber-500", label: "Erwähnt", cls: "bg-amber-50 text-amber-700" },
+    debunks: { dot: "bg-emerald-500", label: "Widerlegt", cls: "bg-emerald-50 text-emerald-700" },
+    unrelated: { dot: "bg-slate-400", label: "Unabhängig", cls: "bg-slate-50 text-slate-600" },
+  };
+  const s = map[stance];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide",
+        compact ? "text-[10px]" : "text-[10px]",
+        s.cls,
       )}
     >
-      {children}
-    </button>
+      <span className={cn("h-1.5 w-1.5 rounded-full", s.dot)} />
+      {s.label}
+    </span>
   );
 }
 
-function FeedEmpty({
-  hasMatches,
-  onRun,
-  running,
-}: {
-  hasMatches: boolean;
-  onRun: () => void;
-  running: boolean;
-}) {
+/* ─────────────────────────────  Empty states  ───────────────────────────── */
+
+function FeedEmpty({ onRun, running }: { onRun: () => void; running: boolean }) {
   return (
-    <div className="mt-6 rounded-2xl border border-dashed border-border bg-white p-10 text-center">
-      <p className="text-3xl">{hasMatches ? "🎯" : "🔍"}</p>
-      <h3 className="font-display mt-3 text-xl font-semibold">
-        {hasMatches ? "Kein Treffer in diesem Filter." : "Noch keine Videos entdeckt."}
+    <div className="mt-14 rounded-3xl border border-dashed border-border bg-white p-14 text-center">
+      <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-signal/10 text-signal">
+        <Sparkles className="h-6 w-6" />
+      </div>
+      <h3 className="font-display mt-5 text-2xl font-semibold tracking-tight">
+        Noch keine Chancen entdeckt
       </h3>
-      <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-        {hasMatches
-          ? "Wähle ein anderes Thema oder setze den Filter zurück."
-          : "Starte deinen ersten Discovery-Lauf. Die KI durchsucht YouTube nach Videos, die zu deinen Claims passen."}
+      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+        Starte einen Discovery-Lauf und wir zeigen dir die relevantesten Videos zuerst.
       </p>
-      {!hasMatches && (
-        <button
-          onClick={onRun}
-          disabled={running}
-          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-signal px-5 py-2.5 text-sm font-semibold text-signal-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
-        >
-          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {running ? "Suche läuft …" : "Ersten Discovery-Lauf starten"}
-        </button>
-      )}
+      <button
+        onClick={onRun}
+        disabled={running}
+        className="mt-6 inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm font-semibold text-background transition hover:opacity-90 disabled:opacity-50"
+      >
+        {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+        {running ? "Suche läuft …" : "Discovery starten"}
+      </button>
     </div>
   );
 }
 
 function EmptyState({ onLoad, seeding }: { onLoad: () => void; seeding: boolean }) {
   return (
-    <div className="mt-10 overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-white via-white to-accent/40 p-10 shadow-sm md:p-14">
+    <div className="mt-14 overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-white via-white to-accent/40 p-12 shadow-sm md:p-16">
       <div className="mx-auto max-w-xl text-center">
-        <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-signal/10 text-2xl">
-          ✨
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-signal/10 text-signal">
+          <Sparkles className="h-6 w-6" />
         </div>
         <h2 className="font-display mt-6 text-3xl font-bold tracking-tight">
           Willkommen bei Veritas
         </h2>
         <p className="mt-3 text-base text-muted-foreground">
-          Lade den <span className="font-medium text-foreground">Christian-Wolf-Starter-Pack</span>{" "}
-          mit typischen Falschaussagen aus Ernährung, Fitness und Supplements — oder starte
-          mit einem leeren Workspace.
+          Lade den Starter-Pack mit typischen Aussagen aus Ernährung, Fitness und Supplements —
+          oder starte mit einem leeren Workspace.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button
             onClick={onLoad}
             disabled={seeding}
-            className="inline-flex items-center gap-2 rounded-xl bg-signal px-5 py-3 text-sm font-semibold text-signal-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-semibold text-background shadow-sm transition hover:opacity-90 disabled:opacity-50"
           >
             {seeding ? "Lade …" : (<><Sparkles className="h-4 w-4" /> Starter-Pack laden</>)}
           </button>
           <Link
             to="/topics"
-            className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-5 py-3 text-sm font-medium transition hover:bg-accent"
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-5 py-3 text-sm font-medium transition hover:bg-accent"
           >
             <Plus className="h-4 w-4" /> Leer starten
           </Link>
@@ -694,170 +595,7 @@ function EmptyState({ onLoad, seeding }: { onLoad: () => void; seeding: boolean 
   );
 }
 
-function StatCard({
-  emoji,
-  label,
-  value,
-  tone,
-  muted,
-}: {
-  emoji: string;
-  label: string;
-  value: number | string;
-  tone?: "signal" | "warning";
-  muted?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <span className="text-lg">{emoji}</span>
-        {tone === "signal" && (
-          <span className="rounded-full bg-signal/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-signal">
-            aktiv
-          </span>
-        )}
-      </div>
-      <p
-        className={
-          "mt-4 text-3xl font-bold tracking-tight " +
-          (muted ? "text-muted-foreground/60" : "text-foreground")
-        }
-      >
-        {value}
-      </p>
-      <p className="mt-1 text-xs font-medium text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
-function formatCount(n: number | null | undefined): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return String(n);
-}
-
-function formatDuration(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-  return `${m}:${String(sec).padStart(2, "0")}`;
-}
-
-function formatPerHour(views: number | null | undefined, publishedAt: string): string {
-  if (!views) return "—";
-  const hours = Math.max(1, (Date.now() - new Date(publishedAt).getTime()) / 3_600_000);
-  return formatCount(Math.round(views / hours));
-}
-
-function formatRelativeTime(iso: string): string {
-  const d = new Date(iso).getTime();
-  const diff = Date.now() - d;
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return "gerade eben";
-  if (m < 60) return `vor ${m} Min`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `vor ${h} Std`;
-  const days = Math.floor(h / 24);
-  if (days < 30) return `vor ${days} Tag${days === 1 ? "" : "en"}`;
-  return new Date(iso).toLocaleDateString("de-DE");
-}
-
-function RejectedSection({ rejected }: { rejected: Match[] }) {
-  const [open, setOpen] = useState(false);
-  if (rejected.length === 0) return null;
-
-  return (
-    <section className="mt-10">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between rounded-2xl border border-border bg-white px-5 py-4 text-left shadow-sm transition hover:bg-accent/50"
-      >
-        <div>
-          <h2 className="font-display text-lg font-semibold tracking-tight">
-            🔍 Auch geprüft, aber verworfen
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {rejected.length} Videos hat die KI angeschaut, aber nicht als Match eingestuft.
-            Sortiert nach Confidence — die obersten Kandidaten waren am nächsten dran.
-          </p>
-        </div>
-        <ChevronDown className={cn("h-5 w-5 shrink-0 transition", open && "rotate-180")} />
-      </button>
-
-      {open && (
-        <div className="mt-3 grid gap-2">
-          {rejected.map((r) => (
-            <RejectedCard key={r.id} match={r} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function RejectedCard({ match }: { match: Match }) {
-  const v = match.video;
-  const conf = Math.round(((match.ai_confidence as number | null) ?? 0) * 100);
-  const stance = ((match as { stance?: Stance | null }).stance ?? null) as Stance | null;
-  return (
-    <div className="flex gap-3 rounded-xl border border-border/60 bg-white p-3">
-      {v?.thumbnail_url ? (
-        <a
-          href={v.url}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="block h-16 w-28 shrink-0 overflow-hidden rounded-lg"
-        >
-          <img src={v.thumbnail_url} alt="" className="h-full w-full object-cover" loading="lazy" />
-        </a>
-      ) : (
-        <div className="h-16 w-28 shrink-0 rounded-lg bg-muted" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <a
-            href={v?.url ?? "#"}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="line-clamp-1 text-sm font-medium hover:text-signal"
-          >
-            {v?.title || "Ohne Titel"}
-          </a>
-          <span
-            className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600"
-            title="KI-Confidence"
-          >
-            {conf}%
-          </span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          <StanceBadge stance={stance} />
-          <p className="text-[11px] text-muted-foreground">
-            {v?.channel_name ?? "—"}
-            {match.topic?.name && <> · 🎯 {match.topic.name}</>}
-            {match.claim?.text && <> · „{match.claim.text}"</>}
-          </p>
-        </div>
-        {match.ai_reasoning && (
-          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-            💭 {match.ai_reasoning}
-          </p>
-        )}
-        <div className="mt-2">
-          <FeedbackButtons
-            matchId={match.id}
-            current={(match.user_feedback as FeedbackRating | null) ?? null}
-            size="sm"
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-type FeedbackRating = "relevant" | "neutral" | "not_relevant";
+/* ─────────────────────────────  Feedback  ───────────────────────────── */
 
 function FeedbackButtons({
   matchId,
@@ -880,14 +618,6 @@ function FeedbackButtons({
     setOptimistic(rating);
     try {
       await submit({ data: { matchId, rating } });
-      toast.success(
-        rating === "relevant"
-          ? "Danke — die KI lernt daraus."
-          : rating === "not_relevant"
-          ? "Verstanden. Weniger davon."
-          : "Notiert.",
-        { duration: 2000 },
-      );
       qc.invalidateQueries({ queryKey: ["discovery-feed"] });
     } catch (e) {
       setOptimistic(current);
@@ -898,12 +628,11 @@ function FeedbackButtons({
   }
 
   const items: Array<{ r: FeedbackRating; emoji: string; label: string; on: string }> = [
-    { r: "relevant", emoji: "👍", label: "Relevant", on: "bg-emerald-100 text-emerald-700 border-emerald-300" },
-    { r: "neutral", emoji: "😐", label: "Neutral", on: "bg-slate-200 text-slate-700 border-slate-300" },
-    { r: "not_relevant", emoji: "👎", label: "Nicht", on: "bg-rose-100 text-rose-700 border-rose-300" },
+    { r: "relevant", emoji: "👍", label: "Relevant", on: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    { r: "not_relevant", emoji: "👎", label: "Nicht relevant", on: "bg-rose-50 text-rose-700 border-rose-200" },
   ];
 
-  const pad = size === "sm" ? "px-2 py-1 text-[11px]" : "px-2.5 py-1.5 text-xs";
+  const pad = size === "sm" ? "h-7 w-7 text-xs" : "h-8 w-8 text-sm";
 
   return (
     <div className="inline-flex gap-1" role="group" aria-label="Feedback">
@@ -916,13 +645,12 @@ function FeedbackButtons({
             disabled={busy !== null}
             title={it.label}
             className={cn(
-              "inline-flex items-center gap-1 rounded-lg border font-medium transition disabled:opacity-60",
+              "inline-flex items-center justify-center rounded-full border transition disabled:opacity-60",
               pad,
               active ? it.on : "border-border bg-white text-muted-foreground hover:bg-accent",
             )}
           >
-            <span>{it.emoji}</span>
-            {size === "md" && <span>{it.label}</span>}
+            {it.emoji}
           </button>
         );
       })}
@@ -930,27 +658,35 @@ function FeedbackButtons({
   );
 }
 
-function StanceBadge({ stance }: { stance: Stance | null }) {
-  if (!stance) return null;
-  const map: Record<Stance, { emoji: string; label: string; cls: string }> = {
-    promotes: { emoji: "🔴", label: "Verbreitet Mythos", cls: "bg-red-100 text-red-700 border-red-200" },
-    mentions: { emoji: "🟡", label: "Erwähnt neutral", cls: "bg-amber-100 text-amber-700 border-amber-200" },
-    debunks: { emoji: "🟢", label: "Widerlegt bereits", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" },
-    unrelated: { emoji: "⚪", label: "Unabhängig", cls: "bg-slate-100 text-slate-600 border-slate-200" },
-  };
-  const s = map[stance];
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        s.cls,
-      )}
-      title={s.label}
-    >
-      <span>{s.emoji}</span>
-      <span>{s.label}</span>
-    </span>
-  );
+/* ─────────────────────────────  Formatters  ───────────────────────────── */
+
+function formatCount(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
 }
 
+function formatDuration(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
 
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso).getTime();
+  const diff = Date.now() - d;
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "gerade eben";
+  if (m < 60) return `vor ${m} Min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `vor ${h} Std`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `vor ${days} Tag${days === 1 ? "" : "en"}`;
+  return new Date(iso).toLocaleDateString("de-DE");
+}
+
+// Kept for build; not currently referenced in the user-facing dashboard.
+void ChevronDown;
