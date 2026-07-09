@@ -1,13 +1,13 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Tags, LogOut, User as UserIcon } from "lucide-react";
+import { LayoutDashboard, Tags, LogOut, User as UserIcon, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { to: "/dashboard", label: "Discovery", icon: LayoutDashboard, kicker: "01" },
-  { to: "/topics", label: "Themen & Claims", icon: Tags, kicker: "02" },
+  { to: "/dashboard", label: "Discovery", icon: LayoutDashboard, emoji: "🔥" },
+  { to: "/topics", label: "Themen & Claims", icon: Tags, emoji: "🎯" },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -40,13 +40,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface md:flex">
-        <div className="flex h-16 items-center gap-2 border-b border-border px-6">
-          <div className="h-2 w-2 rounded-full bg-signal" />
-          <span className="font-display text-xl leading-none">Veritas</span>
+        <div className="flex h-16 items-center gap-2.5 border-b border-border px-6">
+          <div className="grid h-8 w-8 place-items-center rounded-lg bg-signal text-signal-foreground">
+            <Sparkles className="h-4 w-4" strokeWidth={2.25} />
+          </div>
+          <span className="font-display text-lg font-bold leading-none">Veritas</span>
         </div>
 
-        <nav className="flex-1 px-3 py-6">
-          <p className="px-3 pb-3 font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
+        <nav className="flex-1 px-3 py-5">
+          <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Workspace
           </p>
           <ul className="space-y-1">
@@ -57,21 +59,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <Link
                     to={item.to}
                     className={cn(
-                      "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition",
+                      "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
                       active
-                        ? "bg-accent text-foreground"
-                        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                        ? "bg-white text-signal shadow-sm ring-1 ring-border"
+                        : "text-foreground/70 hover:bg-white/60 hover:text-foreground",
                     )}
                   >
-                    <span
-                      className={cn(
-                        "font-mono text-[10px]",
-                        active ? "text-signal" : "text-muted-foreground/60",
-                      )}
-                    >
-                      {item.kicker}
-                    </span>
-                    <item.icon className="h-4 w-4" strokeWidth={1.5} />
+                    <span className="text-base leading-none">{item.emoji}</span>
                     {item.label}
                   </Link>
                 </li>
@@ -81,12 +75,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="border-t border-border p-3">
-          <div className="flex items-center gap-3 rounded-md px-3 py-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent">
-              <UserIcon className="h-4 w-4 text-muted-foreground" />
+          <div className="flex items-center gap-3 rounded-lg px-2 py-2">
+            <div className="grid h-9 w-9 place-items-center rounded-full bg-accent text-accent-foreground">
+              <UserIcon className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm">{name || "…"}</p>
+              <p className="truncate text-sm font-medium">{name || "…"}</p>
               <p className="truncate text-xs text-muted-foreground">{email}</p>
             </div>
             <button
