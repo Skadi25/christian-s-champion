@@ -689,6 +689,13 @@ function RejectedCard({ match }: { match: Match }) {
             💭 {match.ai_reasoning}
           </p>
         )}
+        <div className="mt-2">
+          <FeedbackButtons
+            matchId={match.id}
+            current={(match.user_feedback as FeedbackRating | null) ?? null}
+            size="sm"
+          />
+        </div>
       </div>
     </div>
   );
