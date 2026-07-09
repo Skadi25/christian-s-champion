@@ -33,8 +33,9 @@ export async function getTrendingForUser(userId: string) {
     }
   }
 
+  const sinceMs = new Date(since).getTime();
   const scored = (matches ?? [])
-    .filter((m) => m.video)
+    .filter((m) => m.video && m.video.published_at && new Date(m.video.published_at).getTime() >= sinceMs)
     .map((m) => {
       const v = m.video!;
       const snaps = snapshots.get(v.id) ?? [];
