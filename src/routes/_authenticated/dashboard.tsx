@@ -346,6 +346,7 @@ function VideoMatchCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
+                <StanceBadge stance={stance} />
                 {match.topic?.name && (
                   <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
                     🎯 {match.topic.name}
