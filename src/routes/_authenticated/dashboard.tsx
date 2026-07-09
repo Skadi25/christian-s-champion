@@ -140,14 +140,17 @@ function Dashboard() {
     <AppShell>
       <div className="mx-auto max-w-7xl px-6 py-12 md:px-12">
         {/* Header */}
-        <div className="flex flex-wrap items-end justify-between gap-6">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4 sm:flex sm:flex-wrap sm:justify-between sm:gap-6">
           <div className="min-w-0">
-            <h1 className="font-display text-4xl font-bold tracking-tight md:text-5xl">
+            <p className="text-xs font-semibold uppercase tracking-wider text-signal">
+              ✨ Dein Discovery-Feed
+            </p>
+            <h1 className="font-display mt-2 text-3xl font-bold tracking-tight sm:text-4xl md:text-5xl">
               {greeting}
-              {displayName ? `, ${displayName}` : ""}
+              {displayName ? `, ${displayName}` : ""} 👋
             </h1>
-            <p className="mt-3 text-base text-muted-foreground">
-              Deine besten Chancen — heute priorisiert.
+            <p className="mt-3 text-sm text-muted-foreground sm:text-base">
+              🚀 Deine besten Chancen — heute frisch für dich priorisiert.
             </p>
           </div>
           {!empty && (
@@ -155,18 +158,18 @@ function Dashboard() {
               <button
                 onClick={handleRun}
                 disabled={running}
-                className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm font-semibold text-background shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-signal to-purple-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:shadow-lg disabled:opacity-50"
               >
                 {running ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                {running ? "Aktualisiere …" : "Aktualisieren"}
+                {running ? "Suche läuft …" : "⚡ Aktualisieren"}
               </button>
               {lastRun?.finished_at && (
                 <p className="text-xs text-muted-foreground">
-                  Zuletzt {formatRelativeTime(lastRun.finished_at)}
+                  🕒 Zuletzt {formatRelativeTime(lastRun.finished_at)}
                 </p>
               )}
             </div>
