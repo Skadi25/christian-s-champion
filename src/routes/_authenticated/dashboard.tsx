@@ -260,6 +260,8 @@ function Dashboard() {
               )}
             </section>
 
+            <RejectedSection rejected={feedQ.data?.rejected ?? []} />
+
             <div className="mt-10 rounded-2xl border border-dashed border-border bg-surface p-6 text-center">
               <p className="text-xs text-muted-foreground">
                 Phase 3 kommt als nächstes: pro Video ein KI-Reaktionsentwurf mit Hook und
