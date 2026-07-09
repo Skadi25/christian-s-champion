@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { seedStarterPack } from "@/lib/starter-pack";
-import { runDiscovery, getDiscoveryFeed, submitFeedback } from "@/lib/discovery.functions";
+import { runDiscovery, getDiscoveryFeed, submitFeedback, getLastRunTrace } from "@/lib/discovery.functions";
 import { cn } from "@/lib/utils";
 import type { Stance } from "@/lib/discovery/scoring";
 
