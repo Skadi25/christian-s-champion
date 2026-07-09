@@ -131,14 +131,58 @@ export async function runDiscoveryForUser(userId: string) {
       }
     }
 
-    // 5. Classify each candidate with AI (parallel with concurrency cap)
-    // We ALWAYS store the classification (matches + rejects) so the user can
-    // see which videos were checked and why they were dismissed.
+    // 4b. Learned preferences (channel affinity + prior video feedback + top channels for AI hint)
+    const { data: prefsRaw } = await supabaseAdmin
+      .from("channel_preferences")
+      .select("channel_id, channel_name, affinity, positive_count, negative_count")
+      .eq("user_id", userId);
+    const affinityByChannel = new Map<string, number>();
+    for (const p of prefsRaw ?? []) {
+      if (p.channel_id) affinityByChannel.set(p.channel_id, Number(p.affinity) || 0);
+    }
+    const topLiked = (prefsRaw ?? [])
+      .filter((p) => (p.positive_count ?? 0) > 0)
+      .sort((a, b) => Number(b.affinity ?? 0) - Number(a.affinity ?? 0))
+      .slice(0, 5)
+      .map((p) => p.channel_name)
+      .filter(Boolean) as string[];
+    const topDisliked = (prefsRaw ?? [])
+      .filter((p) => (p.negative_count ?? 0) > 0)
+      .sort((a, b) => Number(a.affinity ?? 0) - Number(b.affinity ?? 0))
+      .slice(0, 5)
+      .map((p) => p.channel_name)
+      .filter(Boolean) as string[];
+
+    const feedbackByVideoClaim = new Map<string, "relevant" | "neutral" | "not_relevant">();
+    const videoIdsArr = [...videoIdByExternal.values()];
+    if (videoIdsArr.length > 0) {
+      const { data: prev } = await supabaseAdmin
+        .from("video_matches")
+        .select("video_id, claim_id, user_feedback")
+        .eq("user_id", userId)
+        .in("video_id", videoIdsArr)
+        .not("user_feedback", "is", null);
+      for (const row of prev ?? []) {
+        if (row.user_feedback)
+          feedbackByVideoClaim.set(
+            `${row.video_id}:${row.claim_id}`,
+            row.user_feedback as "relevant" | "neutral" | "not_relevant",
+          );
+      }
+    }
+
+    // 5. Classify each candidate with AI (parallel with concurrency cap).
+    // We ALWAYS store the classification (matches + rejects) for transparency.
     const CONCURRENCY = 8;
     let matched = 0;
     let rejected = 0;
     let aiErrors = 0;
     const queue = [...candidates];
+
+    const preferenceHint =
+      topLiked.length + topDisliked.length > 0
+        ? ` Nutzerpräferenz (aus vergangenem Feedback): bevorzugte Kanäle: ${topLiked.join(", ") || "—"}. Abgelehnte Kanäle: ${topDisliked.join(", ") || "—"}. Deutschsprachige Videos werden generell bevorzugt.`
+        : " Deutschsprachige Videos werden generell bevorzugt.";
 
     async function classifyAndStore(cand: CandidateVideo) {
       const videoDbId = videoIdByExternal.get(`${cand.video.platform}:${cand.video.external_id}`);
@@ -153,38 +197,43 @@ export async function runDiscoveryForUser(userId: string) {
       try {
         ai = await chatJson<typeof ai>({
           system:
-            "Du bist ein Faktenchecker. Prüfe, ob das folgende Video die genannte Falschaussage aufstellt, verteidigt oder bewirbt (nicht: widerlegt). Antworte STRICT als JSON mit den Feldern matches (boolean, true nur wenn das Video die Falschaussage AKTIV vertritt), confidence (0-1), summary (kurzer deutscher Satz, was das Video sagt), reasoning (1-2 Sätze deutsch, warum es (nicht) matched).",
+            "Du bist ein Faktenchecker. Prüfe, ob das folgende Video die genannte Falschaussage aufstellt, verteidigt oder bewirbt (nicht: widerlegt). Antworte STRICT als JSON mit den Feldern matches (boolean, true nur wenn das Video die Falschaussage AKTIV vertritt), confidence (0-1), summary (kurzer deutscher Satz, was das Video sagt), reasoning (1-2 Sätze deutsch, warum es (nicht) matched)." +
+            preferenceHint,
           user: JSON.stringify({
             falschaussage: cand.claim.text,
             warum_problematisch: cand.claim.why_problematic ?? undefined,
             video_titel: cand.video.title,
             video_beschreibung: (cand.video.description ?? "").slice(0, 1200),
             kanal: cand.video.channel_name ?? undefined,
+            sprache: cand.video.language ?? undefined,
           }),
           temperature: 0.1,
         });
       } catch (e) {
-        if (e instanceof AIGatewayError && e.status === 402) throw e; // bubble up: stop run
+        if (e instanceof AIGatewayError && e.status === 402) throw e;
         console.warn("[discovery] AI-Klassifizierung fehlgeschlagen:", e);
         aiErrors++;
         return;
       }
 
       const isMatch = ai.matches && ai.confidence >= MIN_MATCH_CONFIDENCE;
+      const priorFeedback = feedbackByVideoClaim.get(`${videoDbId}:${cand.claim.id}`) ?? null;
+      const channelAffinity = cand.video.channel_id
+        ? affinityByChannel.get(cand.video.channel_id) ?? null
+        : null;
 
-      let score: number | null = null;
-      let breakdown: unknown = null;
-      if (isMatch) {
-        const r = computeOpportunityScore({
-          view_count: cand.video.view_count,
-          like_count: cand.video.like_count,
-          comment_count: cand.video.comment_count,
-          published_at: cand.video.published_at,
-          ai_confidence: ai.confidence,
-        });
-        score = r.score;
-        breakdown = r.breakdown;
-      }
+      const r = computeOpportunityScore({
+        view_count: cand.video.view_count,
+        like_count: cand.video.like_count,
+        comment_count: cand.video.comment_count,
+        published_at: cand.video.published_at,
+        ai_confidence: ai.confidence,
+        language: cand.video.language,
+        channel_affinity: channelAffinity,
+        user_feedback: priorFeedback,
+      });
+      const score = r.score;
+      const breakdown = r.breakdown;
 
       const { error: mErr } = await supabaseAdmin.from("video_matches").upsert(
         {
