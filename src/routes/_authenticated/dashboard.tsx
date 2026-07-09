@@ -292,12 +292,19 @@ function VideoMatchCard({
   const v = match.video;
   const score = match.opportunity_score ?? 0;
   const bd = (match.score_breakdown ?? null) as {
+    stance?: number;
     reach?: number;
     growth?: number;
     recency?: number;
     engagement?: number;
     confidence?: number;
+    language?: number;
+    channel?: number;
+    stanceAffinity?: number;
+    stanceLabel?: Stance | null;
+    weights?: Record<string, number>;
   } | null;
+  const stance = ((match as { stance?: Stance | null }).stance ?? bd?.stanceLabel ?? null) as Stance | null;
 
   const scoreColor =
     score >= 75
