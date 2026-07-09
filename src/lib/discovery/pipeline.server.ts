@@ -117,7 +117,7 @@ export async function runDiscoveryForUser(userId: string) {
             comment_count: v.comment_count,
             duration_seconds: v.duration_seconds,
             language: v.language,
-            raw_metadata: v.raw_metadata,
+            raw_metadata: v.raw_metadata as never,
             fetched_at: new Date().toISOString(),
           })),
           { onConflict: "platform,external_id" },
