@@ -99,8 +99,8 @@ const DEMO_CLAIMS: DemoClaim[] = [
         likes: 18_900,
         comments: 890,
         stance: "promotes",
-        summary: "Nennt Datteln „zuckerfrei" — sachlich falsch.",
-        reasoning: "Verwechselt „kein zugesetzter Zucker" mit „kein Zucker".",
+        summary: 'Nennt Datteln "zuckerfrei" — sachlich falsch.',
+        reasoning: 'Verwechselt "kein zugesetzter Zucker" mit "kein Zucker".',
         thumbnail:
           "https://images.unsplash.com/photo-1601001435957-74f0958a93c5?auto=format&fit=crop&w=600&q=60",
         daysAgo: 3,
@@ -143,7 +143,7 @@ const DEMO_CLAIMS: DemoClaim[] = [
         likes: 6_100,
         comments: 420,
         stance: "promotes",
-        summary: "Wiederholt den Mythos „wichtigste Mahlzeit des Tages" pauschal.",
+        summary: 'Wiederholt den Mythos "wichtigste Mahlzeit des Tages" pauschal.',
         reasoning: "Nutzt Autoritätsargument ohne aktuelle Studienlage.",
         thumbnail:
           "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=600&q=60",
